@@ -2,3 +2,6 @@ data/
 
 *.exe
 *.dll
+
+node_modules/
+dist/

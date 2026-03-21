@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -68,9 +69,22 @@ func (s *ManageServer) ListenAndServe(addr string) error {
 }
 
 func (s *ManageServer) routes() {
+	s.mux.HandleFunc("/api/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/api/master/overview", s.handleOverview)
 	s.mux.HandleFunc("/api/master/wal", s.handleWAL)
 	s.mux.Handle("/", s.staticHandler())
+}
+
+func (s *ManageServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":   true,
+		"now":  time.Now().Unix(),
+		"root": s.webRoot,
+	})
 }
 
 func (s *ManageServer) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +116,10 @@ func (s *ManageServer) staticHandler() http.Handler {
 	distIndex := filepath.Join(s.webRoot, "index.html")
 	files := http.FileServer(http.Dir(s.webRoot))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
 		path := filepath.Join(s.webRoot, filepath.Clean(r.URL.Path))
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			files.ServeHTTP(w, r)
