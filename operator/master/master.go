@@ -40,27 +40,15 @@ type Master struct {
 }
 
 func New(opts Options) (*Master, error) {
-	root := opts.Root
-	if root == "" {
-		root = defaultMasterRoot
-	}
 	if opts.Store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
-	manageAddr := opts.ManageAddr
-	if manageAddr == "" {
-		manageAddr = ":9000"
-	}
-	grpcAddr := opts.GRPCAddr
-	if grpcAddr == "" {
-		grpcAddr = ":10992"
-	}
 	return &Master{
-		root:       root,
+		root:       opts.Root,
 		store:      opts.Store,
 		hub:        NewHub(),
-		manageAddr: manageAddr,
-		grpcAddr:   grpcAddr,
+		manageAddr: opts.ManageAddr,
+		grpcAddr:   opts.GRPCAddr,
 		webRoot:    opts.WebRoot,
 	}, nil
 }

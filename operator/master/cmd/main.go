@@ -22,8 +22,8 @@ func main() {
 func run() error {
 	var (
 		root       = flag.String("root", ".", "workspace root for master data")
-		manageAddr = flag.String("manage-addr", ":9000", "master manage api listen address")
-		grpcAddr   = flag.String("grpc-addr", ":10992", "master grpc listen address")
+		manageAddr = flag.String("manage-addr", "127.0.0.1:9000", "master manage api listen address")
+		grpcAddr   = flag.String("grpc-addr", "127.0.0.1:10992", "master grpc listen address")
 		webRoot    = flag.String("web-root", "", "optional web dist root")
 	)
 	flag.Parse()
