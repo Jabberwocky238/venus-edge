@@ -14,6 +14,13 @@ import (
 	"sync"
 )
 
+const (
+	httpLogPrefix = "\033[38;5;229m[HTTP]\033[0m"
+	httpLogOK     = "\033[32m"
+	httpLogFail   = "\033[31m"
+	httpLogReset  = "\033[0m"
+)
+
 type matchedHTTPBackend struct {
 	backend     string
 	prunePrefix string
@@ -51,19 +58,23 @@ func NewHTTPEngine(opts HTTPEngineOptions) *HTTPEngine {
 
 func (e *HTTPEngine) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logHTTPRequest(r)
+		recorder := &httpLogResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		defer logHTTPResponse(r, recorder.statusCode, http.StatusText(recorder.statusCode))
+
 		match, err := e.lookupBackend(r)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				http.NotFound(w, r)
+				http.NotFound(recorder, r)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			http.Error(recorder, err.Error(), http.StatusBadGateway)
 			return
 		}
 
 		target, err := url.Parse(match.backend)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("invalid backend %q: %v", match.backend, err), http.StatusBadGateway)
+			http.Error(recorder, fmt.Sprintf("invalid backend %q: %v", match.backend, err), http.StatusBadGateway)
 			return
 		}
 
@@ -84,7 +95,7 @@ func (e *HTTPEngine) Handler() http.Handler {
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		}
-		proxy.ServeHTTP(w, r)
+		proxy.ServeHTTP(recorder, r)
 	})
 }
 
@@ -316,6 +327,16 @@ type singleConnListener struct {
 	accepted bool
 }
 
+type httpLogResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *httpLogResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
 func (l *singleConnListener) Accept() (net.Conn, error) {
 	if l.accepted || l.conn == nil {
 		return nil, net.ErrClosed
@@ -333,4 +354,42 @@ func (l *singleConnListener) Addr() net.Addr {
 		return l.conn.LocalAddr()
 	}
 	return &net.TCPAddr{}
+}
+
+func logHTTPRequest(r *http.Request) {
+	if r == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s request %s %s\n", httpLogPrefix, r.Method, fullRequestPath(r))
+}
+
+func logHTTPResponse(r *http.Request, statusCode int, statusText string) {
+	if r == nil {
+		return
+	}
+	color := httpLogOK
+	if statusCode >= http.StatusBadRequest {
+		color = httpLogFail
+	}
+	fmt.Fprintf(
+		os.Stderr,
+		"%s response %s %s %s[%d] %s%s\n",
+		httpLogPrefix,
+		r.Method,
+		fullRequestPath(r),
+		color,
+		statusCode,
+		statusText,
+		httpLogReset,
+	)
+}
+
+func fullRequestPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
 }

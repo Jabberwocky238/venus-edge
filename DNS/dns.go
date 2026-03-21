@@ -17,6 +17,13 @@ import (
 	mdns "github.com/miekg/dns"
 )
 
+const (
+	dnsLogPrefix = "\033[38;5;117m[DNS]\033[0m"
+	logColorOK   = "\033[32m"
+	logColorFail = "\033[31m"
+	logColorReset = "\033[0m"
+)
+
 type Engine struct {
 	store     ZoneStore
 	root      string
@@ -156,6 +163,7 @@ func newReaderLookup(r io.Reader) (lookup, error) {
 }
 
 func (h *storeHandler) ServeDNS(w mdns.ResponseWriter, req *mdns.Msg) {
+	logDNSRequest(w.RemoteAddr(), req)
 	respond(w, req, func(name string, qtype uint16) ([]mdns.RR, error) {
 		readerHandler, err := h.lookupForQuestion(name)
 		if err != nil {
@@ -177,6 +185,7 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (
 		answers, err := lookup(q.Name, q.Qtype)
 		if err != nil {
 			resp.Rcode = mdns.RcodeServerFailure
+			logDNSResponse(w.RemoteAddr(), req, resp, err)
 			_ = w.WriteMsg(resp)
 			return
 		}
@@ -188,7 +197,64 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (
 		resp.Rcode = mdns.RcodeNameError
 	}
 
+	logDNSResponse(w.RemoteAddr(), req, resp, nil)
 	_ = w.WriteMsg(resp)
+}
+
+func logDNSRequest(addr net.Addr, req *mdns.Msg) {
+	question := "-"
+	if req != nil && len(req.Question) > 0 {
+		q := req.Question[0]
+		question = fmt.Sprintf("%s %s", q.Name, mdns.TypeToString[q.Qtype])
+	}
+	fmt.Fprintf(os.Stderr, "%s query from=%s question=%s\n", dnsLogPrefix, formatRemoteAddr(addr), question)
+}
+
+func logDNSResponse(addr net.Addr, req, resp *mdns.Msg, err error) {
+	question := "-"
+	if req != nil && len(req.Question) > 0 {
+		q := req.Question[0]
+		question = fmt.Sprintf("%s %s", q.Name, mdns.TypeToString[q.Qtype])
+	}
+	if err != nil || (resp != nil && resp.Rcode != mdns.RcodeSuccess) {
+		rcode := mdns.RcodeSuccess
+		if resp != nil {
+			rcode = resp.Rcode
+		}
+		fmt.Fprintf(
+			os.Stderr,
+			"%s %sfail%s to=%s question=%s rcode=%s err=%v\n",
+			dnsLogPrefix,
+			logColorFail,
+			logColorReset,
+			formatRemoteAddr(addr),
+			question,
+			mdns.RcodeToString[rcode],
+			err,
+		)
+		return
+	}
+	answerCount := 0
+	if resp != nil {
+		answerCount = len(resp.Answer)
+	}
+	fmt.Fprintf(
+		os.Stderr,
+		"%s %ssuccess%s to=%s question=%s answers=%d\n",
+		dnsLogPrefix,
+		logColorOK,
+		logColorReset,
+		formatRemoteAddr(addr),
+		question,
+		answerCount,
+	)
+}
+
+func formatRemoteAddr(addr net.Addr) string {
+	if addr == nil {
+		return "-"
+	}
+	return addr.String()
 }
 
 func sortRRsByClientDistance(driver geoIPDriver, addr net.Addr, answers []mdns.RR) {

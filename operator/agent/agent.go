@@ -87,16 +87,20 @@ func (a *Agent) targetPath(kind replication.EventType, hostname string) (string,
 }
 
 func (a *Agent) writeAtomically(target string, data []byte) error {
-	tempDir := filepath.Join(a.root, ".venus-edge", "temp")
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	tempPath := filepath.Join(tempDir, uuid.NewString())
+	tempPath := filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+"."+uuid.NewString()+".tmp")
 	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tempPath, target)
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	if err := os.Rename(tempPath, target); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+	return nil
 }

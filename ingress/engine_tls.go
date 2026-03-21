@@ -13,6 +13,13 @@ import (
 	"sync"
 )
 
+const (
+	tlsLogPrefix = "\033[38;5;183m[TLS]\033[0m"
+	tlsLogOK     = "\033[32m"
+	tlsLogFail   = "\033[31m"
+	tlsLogReset  = "\033[0m"
+)
+
 type TLSPolicyFinder interface {
 	FindTLSPolicyBySNI(serverName string) (TlsPolicy, error)
 }
@@ -119,31 +126,39 @@ func (e *TLSEngine) acceptOne() (net.Conn, error) {
 	conn := newPeekConn(rawConn)
 	serverName, err := readSNI(conn)
 	if err != nil {
+		logTLSRoute("", "", err)
 		_ = rawConn.Close()
 		return nil, err
 	}
+	logTLSAccept(serverName)
 
 	policy, err := e.finder.FindTLSPolicyBySNI(serverName)
 	if err != nil {
+		logTLSRoute(serverName, "", err)
 		_ = rawConn.Close()
 		return nil, err
 	}
 
 	switch policy.Kind() {
 	case TlsPolicy_Kind_tlsPassthrough:
+		logTLSRoute(serverName, tlsRouteTarget(policy, "passthrough"), nil)
 		go e.proxyPassthrough(conn, policy)
 		return nil, ErrConnHandled
 	case TlsPolicy_Kind_tlsTerminate:
+		logTLSRoute(serverName, tlsRouteTarget(policy, "terminate"), nil)
 		go e.proxyTerminated(conn, policy)
 		return nil, ErrConnHandled
 	case TlsPolicy_Kind_https:
 		tlsConn, err := e.terminateTLS(conn, policy)
 		if err != nil {
+			logTLSRoute(serverName, "https", err)
 			_ = rawConn.Close()
 			return nil, fmt.Errorf("terminate https for %q: %w", serverName, err)
 		}
+		logTLSRoute(serverName, "https", nil)
 		return tlsConn, nil
 	default:
+		logTLSRoute(serverName, fmt.Sprintf("unsupported:%v", policy.Kind()), fmt.Errorf("unsupported tls policy kind %v", policy.Kind()))
 		_ = rawConn.Close()
 		return nil, fmt.Errorf("unsupported tls policy kind %v for %q", policy.Kind(), serverName)
 	}
@@ -490,4 +505,28 @@ func proxyBidirectional(left, right net.Conn) {
 	wg.Wait()
 	_ = left.Close()
 	_ = right.Close()
+}
+
+func logTLSAccept(serverName string) {
+	fmt.Fprintf(os.Stderr, "%s accept sni=%s\n", tlsLogPrefix, serverName)
+}
+
+func logTLSRoute(serverName, target string, err error) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s %sroute%s sni=%s to=%s err=%v\n", tlsLogPrefix, tlsLogFail, tlsLogReset, serverName, target, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s %sroute%s sni=%s to=%s\n", tlsLogPrefix, tlsLogOK, tlsLogReset, serverName, target)
+}
+
+func tlsRouteTarget(policy TlsPolicy, mode string) string {
+	backend, err := policy.BackendRef()
+	if err != nil {
+		return mode
+	}
+	hostname, err := backend.Hostname()
+	if err != nil || hostname == "" || backend.Port() == 0 {
+		return mode
+	}
+	return fmt.Sprintf("%s %s", mode, net.JoinHostPort(hostname, strconv.FormatUint(uint64(backend.Port()), 10)))
 }
