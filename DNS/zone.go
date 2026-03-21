@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 )
@@ -57,7 +58,8 @@ func (s FSStore) Write(zone string, records ...RecordBuilder) error {
 }
 
 func OpenZoneFile(root, zone string) (io.ReadCloser, error) {
-	return os.Open(ZoneFilePath(root, zone))
+	path := ZoneFilePath(root, zone)
+	return retryOpenFile(path)
 }
 
 func ZoneFilePath(root, zone string) string {
@@ -159,4 +161,37 @@ func setZoneIndexes(zone Zone, indexes map[RecordType][]uint32) error {
 
 func sanitizeZoneName(zone string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(zone), "."))
+}
+
+func retryOpenFile(path string) (io.ReadCloser, error) {
+	delays := []time.Duration{0, 10 * time.Millisecond, 30 * time.Millisecond, 80 * time.Millisecond}
+	var lastErr error
+	for _, delay := range delays {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		f, err := os.Open(path)
+		if err == nil {
+			return f, nil
+		}
+		if !shouldRetryFileRead(err) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func shouldRetryFileRead(err error) bool {
+	if err == nil || os.IsNotExist(err) {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "used by another process") ||
+		strings.Contains(text, "file is being used by another process") ||
+		strings.Contains(text, "sharing violation") ||
+		strings.Contains(text, "permission denied") ||
+		strings.Contains(text, "resource temporarily unavailable") ||
+		strings.Contains(text, "temporarily unavailable") ||
+		strings.Contains(text, "input/output error")
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 )
@@ -83,11 +84,11 @@ func (s FSStore) WriteHTTP(zone string, route HTTPRoute) error {
 }
 
 func OpenTLSZoneFile(root, zone string) (io.ReadCloser, error) {
-	return os.Open(TLSZoneFilePath(root, zone))
+	return retryOpenFile(TLSZoneFilePath(root, zone))
 }
 
 func OpenHTTPZoneFile(root, zone string) (io.ReadCloser, error) {
-	return os.Open(HTTPZoneFilePath(root, zone))
+	return retryOpenFile(HTTPZoneFilePath(root, zone))
 }
 
 func TLSZoneFilePath(root, zone string) string {
@@ -198,4 +199,37 @@ func writeHTTPZoneTo(w io.Writer, route HTTPRoute) error {
 
 func sanitizeZoneName(zone string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(zone), "."))
+}
+
+func retryOpenFile(path string) (io.ReadCloser, error) {
+	delays := []time.Duration{0, 10 * time.Millisecond, 30 * time.Millisecond, 80 * time.Millisecond}
+	var lastErr error
+	for _, delay := range delays {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		f, err := os.Open(path)
+		if err == nil {
+			return f, nil
+		}
+		if !shouldRetryFileRead(err) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func shouldRetryFileRead(err error) bool {
+	if err == nil || os.IsNotExist(err) {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "used by another process") ||
+		strings.Contains(text, "file is being used by another process") ||
+		strings.Contains(text, "sharing violation") ||
+		strings.Contains(text, "permission denied") ||
+		strings.Contains(text, "resource temporarily unavailable") ||
+		strings.Contains(text, "temporarily unavailable") ||
+		strings.Contains(text, "input/output error")
 }
