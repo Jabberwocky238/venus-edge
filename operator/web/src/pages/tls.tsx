@@ -99,12 +99,12 @@ export default function TLSPage() {
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <Field label="Name">
+          {/* <Field label="Name">
             <input value={hostname.trim()} readOnly className={readOnlyInputClassName} />
           </Field>
           <Field label="SNI">
             <input value={hostname.trim()} readOnly className={readOnlyInputClassName} />
-          </Field>
+          </Field> */}
           <Field label="Kind">
             <select value={draft.kind} onChange={(e) => patch({ kind: e.target.value })} className={inputClassName}>
               {tlsKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
