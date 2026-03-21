@@ -10,8 +10,14 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 )
+
+type matchedHTTPBackend struct {
+	backend     string
+	prunePrefix string
+}
 
 type HTTPEngineOptions struct {
 	Root string
@@ -45,7 +51,7 @@ func NewHTTPEngine(opts HTTPEngineOptions) *HTTPEngine {
 
 func (e *HTTPEngine) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backend, err := e.lookupBackend(r)
+		match, err := e.lookupBackend(r)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				http.NotFound(w, r)
@@ -55,13 +61,26 @@ func (e *HTTPEngine) Handler() http.Handler {
 			return
 		}
 
-		target, err := url.Parse(backend)
+		target, err := url.Parse(match.backend)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("invalid backend %q: %v", backend, err), http.StatusBadGateway)
+			http.Error(w, fmt.Sprintf("invalid backend %q: %v", match.backend, err), http.StatusBadGateway)
 			return
 		}
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.Rewrite = func(req *httputil.ProxyRequest) {
+			rewrittenPath := req.In.URL.Path
+			rewrittenRawPath := req.In.URL.RawPath
+			if match.prunePrefix != "" {
+				rewrittenPath = pruneRequestPath(rewrittenPath, match.prunePrefix)
+				rewrittenRawPath = pruneRequestPath(rewrittenRawPath, match.prunePrefix)
+			}
+
+			req.SetURL(target)
+			req.Out.URL.Path = joinBackendPath(target.Path, rewrittenPath)
+			req.Out.URL.RawPath = joinBackendPath(target.RawPath, rewrittenRawPath)
+		}
+		proxy.Director = nil
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 		}
@@ -108,34 +127,34 @@ func (e *HTTPEngine) Listen(ctx context.Context) error {
 	return err
 }
 
-func (e *HTTPEngine) lookupBackend(r *http.Request) (string, error) {
+func (e *HTTPEngine) lookupBackend(r *http.Request) (matchedHTTPBackend, error) {
 	zone, err := e.findZone(r.Host)
 	if err != nil {
-		return "", err
+		return matchedHTTPBackend{}, err
 	}
 
 	policies, err := zone.HttpPolicies()
 	if err != nil {
-		return "", fmt.Errorf("read http policies: %w", err)
+		return matchedHTTPBackend{}, fmt.Errorf("read http policies: %w", err)
 	}
 
 	for i := 0; i < policies.Len(); i++ {
 		policy := policies.At(i)
-		match, err := matchPolicy(policy, r)
+		prunePrefix, match, err := matchPolicy(policy, r)
 		if err != nil {
-			return "", fmt.Errorf("match policy %d: %w", i, err)
+			return matchedHTTPBackend{}, fmt.Errorf("match policy %d: %w", i, err)
 		}
 		if !match {
 			continue
 		}
 		backend, err := policy.Backend()
 		if err != nil {
-			return "", fmt.Errorf("read backend: %w", err)
+			return matchedHTTPBackend{}, fmt.Errorf("read backend: %w", err)
 		}
-		return backend, nil
+		return matchedHTTPBackend{backend: backend, prunePrefix: prunePrefix}, nil
 	}
 
-	return "", os.ErrNotExist
+	return matchedHTTPBackend{}, os.ErrNotExist
 }
 
 func (e *HTTPEngine) findZone(host string) (HttpZone, error) {
@@ -152,28 +171,30 @@ func (e *HTTPEngine) findZone(host string) (HttpZone, error) {
 	return HttpZone{}, os.ErrNotExist
 }
 
-func matchPolicy(policy HttpPolicy, r *http.Request) (bool, error) {
+func matchPolicy(policy HttpPolicy, r *http.Request) (string, bool, error) {
 	switch policy.Which() {
 	case HttpPolicy_Which_pathname:
 		pathname, err := policy.Pathname()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
 		return matchPathname(pathname, r.URL.Path)
 	case HttpPolicy_Which_query:
 		query, err := policy.Query()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
-		return matchKeyValues(query.Items, r.URL.Query().Get)
+		ok, err := matchKeyValues(query.Items, r.URL.Query().Get)
+		return "", ok, err
 	case HttpPolicy_Which_header:
 		header, err := policy.Header()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
-		return matchKeyValues(header.Items, r.Header.Get)
+		ok, err := matchKeyValues(header.Items, r.Header.Get)
+		return "", ok, err
 	default:
-		return false, fmt.Errorf("unsupported policy selector %v", policy.Which())
+		return "", false, fmt.Errorf("unsupported policy selector %v", policy.Which())
 	}
 }
 
@@ -202,25 +223,61 @@ func matchKeyValues(getter keyValueGetter, lookup valueLookup) (bool, error) {
 	return true, nil
 }
 
-func matchPathname(pathname Pathname, requestPath string) (bool, error) {
+func matchPathname(pathname Pathname, requestPath string) (string, bool, error) {
 	switch pathname.Which() {
 	case Pathname_Which_exact:
 		value, err := pathname.Exact()
-		return requestPath == value, err
+		return "", requestPath == value, err
 	case Pathname_Which_prefix:
 		value, err := pathname.Prefix()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
-		return len(requestPath) >= len(value) && requestPath[:len(value)] == value, nil
+		return value, len(requestPath) >= len(value) && requestPath[:len(value)] == value, nil
 	case Pathname_Which_regex:
 		value, err := pathname.Regex()
 		if err != nil {
-			return false, err
+			return "", false, err
 		}
-		return regexp.MatchString(value, requestPath)
+		ok, err := regexp.MatchString(value, requestPath)
+		return "", ok, err
 	default:
-		return false, fmt.Errorf("unsupported pathname selector %v", pathname.Which())
+		return "", false, fmt.Errorf("unsupported pathname selector %v", pathname.Which())
+	}
+}
+
+func pruneRequestPath(path, prefix string) string {
+	if path == "" || prefix == "" || len(path) < len(prefix) || path[:len(prefix)] != prefix {
+		return path
+	}
+	pruned := path[len(prefix):]
+	if pruned == "" {
+		return "/"
+	}
+	if pruned[0] != '/' {
+		return "/" + pruned
+	}
+	return pruned
+}
+
+func joinBackendPath(basePath, requestPath string) string {
+	switch {
+	case basePath == "":
+		if requestPath == "" {
+			return "/"
+		}
+		return requestPath
+	case requestPath == "":
+		if basePath == "" {
+			return "/"
+		}
+		return basePath
+	case strings.HasSuffix(basePath, "/") && strings.HasPrefix(requestPath, "/"):
+		return basePath + requestPath[1:]
+	case !strings.HasSuffix(basePath, "/") && !strings.HasPrefix(requestPath, "/"):
+		return basePath + "/" + requestPath
+	default:
+		return basePath + requestPath
 	}
 }
 

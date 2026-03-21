@@ -436,16 +436,9 @@ func (testEmptyTXTRecordBuilder) Build(record DnsRecord) error {
 	return fmt.Errorf("values is required")
 }
 
-func TestEngineStopWithoutListen(t *testing.T) {
-	engine := NewDNSEngine(DNSEngineOptions{Store: FSStore{Root: t.TempDir()}})
-	if err := engine.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
-}
-
 func TestNewDNSEngineIgnoresMissingMMDB(t *testing.T) {
 	engine := NewDNSEngine(DNSEngineOptions{
-		Store:    FSStore{Root: t.TempDir()},
+		Root:     t.TempDir(),
 		MMDBPath: filepath.Join(t.TempDir(), "missing.mmdb"),
 	})
 	if engine.geoDriver != nil {
@@ -455,7 +448,7 @@ func TestNewDNSEngineIgnoresMissingMMDB(t *testing.T) {
 
 func TestNewDNSEngineLoadsRealMMDB(t *testing.T) {
 	engine := NewDNSEngine(DNSEngineOptions{
-		Store:    FSStore{Root: t.TempDir()},
+		Root:     t.TempDir(),
 		MMDBPath: filepath.Join("..", "data", "GeoLite2-City.mmdb"),
 	})
 	if engine.geoDriver == nil {
@@ -478,7 +471,7 @@ func TestNewDNSEnginePanicsOnBrokenMMDB(t *testing.T) {
 		}
 	}()
 	_ = NewDNSEngine(DNSEngineOptions{
-		Store:    FSStore{Root: t.TempDir()},
+		Root:     t.TempDir(),
 		MMDBPath: filepath.Join("..", "data", "GeoLite2-City.mmdb.bak"),
 	})
 }
@@ -495,13 +488,13 @@ func TestEngineListenAndStop(t *testing.T) {
 		t.Fatalf("Write() error = %v", err)
 	}
 
-	engine := NewDNSEngine(DNSEngineOptions{Store: store})
+	engine := NewDNSEngine(DNSEngineOptions{Root: root, Addr: "127.0.0.1:18053"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- engine.Listen("127.0.0.1:18053", ctx)
+		errCh <- engine.Listen(ctx)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	cancel()
@@ -526,13 +519,13 @@ func TestEngineListenAndServeRealDNSQuery(t *testing.T) {
 	}
 
 	addr := "127.0.0.1:18054"
-	engine := NewDNSEngine(DNSEngineOptions{Store: store})
+	engine := NewDNSEngine(DNSEngineOptions{Root: root, Addr: addr})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- engine.Listen(addr, ctx)
+		errCh <- engine.Listen(ctx)
 	}()
 	time.Sleep(100 * time.Millisecond)
 

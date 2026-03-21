@@ -1,8 +1,10 @@
 package master
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,15 +22,6 @@ type ManageServer struct {
 type manageOverview struct {
 	NowUnix     int64                `json:"now_unix"`
 	Subscribers []SubscriberSnapshot `json:"subscribers"`
-	WAL         WALStatus            `json:"wal"`
-	WALFiles    []manageFileInfo     `json:"wal_files"`
-}
-
-type manageFileInfo struct {
-	Path    string `json:"path"`
-	Exists  bool   `json:"exists"`
-	Size    int64  `json:"size"`
-	ModTime int64  `json:"mod_time"`
 }
 
 func NewManageServer(m *Master, hub *Hub, webRoot string) (*ManageServer, error) {
@@ -71,7 +64,9 @@ func (s *ManageServer) ListenAndServe(addr string) error {
 func (s *ManageServer) routes() {
 	s.mux.HandleFunc("/api/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/api/master/overview", s.handleOverview)
-	s.mux.HandleFunc("/api/master/wal", s.handleWAL)
+	s.mux.HandleFunc("/api/master/dns", s.handleDNS)
+	s.mux.HandleFunc("/api/master/tls", s.handleTLS)
+	s.mux.HandleFunc("/api/master/http", s.handleHTTP)
 	s.mux.Handle("/", s.staticHandler())
 }
 
@@ -92,24 +87,86 @@ func (s *ManageServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	status := s.master.WALStatus()
 	writeJSON(w, manageOverview{
 		NowUnix:     time.Now().Unix(),
 		Subscribers: s.hub.Snapshot(),
-		WAL:         status,
-		WALFiles:    statFiles(s.master.WALFiles()),
 	})
 }
 
-func (s *ManageServer) handleWAL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (s *ManageServer) handleDNS(w http.ResponseWriter, r *http.Request) {
+	s.handleResource(
+		w,
+		r,
+		func(ctx context.Context, hostname string) (any, error) {
+			return s.master.ReadDNSJSON(ctx, hostname)
+		},
+		func(ctx context.Context, hostname string, payload []byte) (any, error) {
+			return s.master.PublishDNSJSON(ctx, hostname, payload)
+		},
+	)
+}
+
+func (s *ManageServer) handleTLS(w http.ResponseWriter, r *http.Request) {
+	s.handleResource(
+		w,
+		r,
+		func(ctx context.Context, hostname string) (any, error) {
+			return s.master.ReadTLSJSON(ctx, hostname)
+		},
+		func(ctx context.Context, hostname string, payload []byte) (any, error) {
+			return s.master.PublishTLSJSON(ctx, hostname, payload)
+		},
+	)
+}
+
+func (s *ManageServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	s.handleResource(
+		w,
+		r,
+		func(ctx context.Context, hostname string) (any, error) {
+			return s.master.ReadHTTPJSON(ctx, hostname)
+		},
+		func(ctx context.Context, hostname string, payload []byte) (any, error) {
+			return s.master.PublishHTTPJSON(ctx, hostname, payload)
+		},
+	)
+}
+
+func (s *ManageServer) handleResource(
+	w http.ResponseWriter,
+	r *http.Request,
+	read func(context.Context, string) (any, error),
+	write func(context.Context, string, []byte) (any, error),
+) {
+	hostname := strings.TrimSpace(r.URL.Query().Get("hostname"))
+	if hostname == "" {
+		http.Error(w, "hostname is required", http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{
-		"wal":   s.master.WALStatus(),
-		"files": statFiles(s.master.WALFiles()),
-	})
+
+	switch r.Method {
+	case http.MethodGet:
+		result, err := read(r.Context(), hostname)
+		if err != nil {
+			writeAPIError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	case http.MethodPut:
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request body failed", http.StatusBadRequest)
+			return
+		}
+		result, err := write(r.Context(), hostname, payload)
+		if err != nil {
+			writeAPIError(w, err)
+			return
+		}
+		writeJSON(w, result)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *ManageServer) staticHandler() http.Handler {
@@ -134,16 +191,13 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func statFiles(paths []string) []manageFileInfo {
-	files := make([]manageFileInfo, 0, len(paths))
-	for _, path := range paths {
-		info := manageFileInfo{Path: path}
-		if stat, err := os.Stat(path); err == nil {
-			info.Exists = true
-			info.Size = stat.Size()
-			info.ModTime = stat.ModTime().Unix()
-		}
-		files = append(files, info)
+func writeAPIError(w http.ResponseWriter, err error) {
+	if err == nil {
+		return
 	}
-	return files
+	if os.IsNotExist(err) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
 }

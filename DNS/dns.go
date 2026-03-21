@@ -19,13 +19,16 @@ import (
 
 type Engine struct {
 	store     ZoneStore
+	root      string
+	addr      string
 	geoDriver geoIPDriver
 	mu        sync.Mutex
 	server    *mdns.Server
 }
 
 type DNSEngineOptions struct {
-	Store    ZoneStore
+	Root     string
+	Addr     string
 	MMDBPath string
 }
 
@@ -45,16 +48,37 @@ type storeHandler struct {
 }
 
 func NewDNSEngine(opts DNSEngineOptions) *Engine {
-	engine := &Engine{store: opts.Store}
+	engine := &Engine{root: opts.Root, addr: opts.Addr}
 	engine.initGeoIP(opts.MMDBPath)
 	return engine
 }
 
-func (e *Engine) Listen(addr string, ctx context.Context) error {
+func (e *Engine) Listen(ctx context.Context) error {
+	if e.addr == "" {
+		return nil
+	}
+
+	store := e.store
+	if store == nil {
+		if e.root == "" {
+			return fmt.Errorf("dns engine store is not configured")
+		}
+		fsStore, err := NewFSStore(e.root)
+		if err != nil {
+			return err
+		}
+		store = fsStore
+		e.mu.Lock()
+		if e.store == nil {
+			e.store = store
+		}
+		e.mu.Unlock()
+	}
+
 	server := &mdns.Server{
-		Addr:    addr,
+		Addr:    e.addr,
 		Net:     "udp",
-		Handler: &storeHandler{store: e.store, geoDriver: e.geoDriver},
+		Handler: &storeHandler{store: store, geoDriver: e.geoDriver},
 	}
 
 	e.mu.Lock()

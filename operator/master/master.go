@@ -1,36 +1,68 @@
 package master
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
 	"path/filepath"
 	"time"
 
 	dns "aaa/DNS"
 	ingress "aaa/ingress"
+	"aaa/operator/master/objectstore"
 	"aaa/operator/replication"
+
+	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
-type ObjectStore interface {
-	Put(ctx context.Context, key string, value []byte) error
-}
+const defaultMasterRoot = "."
 
-type Publisher interface {
-	Publish(change *replication.ChangeEnvelope) *replication.PushChangeResponse
+type Options struct {
+	Root       string
+	Store      objectstore.Store
+	ManageAddr string
+	GRPCAddr   string
+	WebRoot    string
 }
 
 type Master struct {
-	store     ObjectStore
-	publisher Publisher
-	wal       *WAL
+	root       string
+	store      objectstore.Store
+	hub        *Hub
+	manageAddr string
+	grpcAddr   string
+	webRoot    string
 }
 
-func New(store ObjectStore, publisher Publisher) *Master {
-	return mustNew(defaultMasterRoot, store, publisher)
-}
-
-func NewWithRoot(root string, store ObjectStore, publisher Publisher) (*Master, error) {
-	return newMaster(root, store, publisher)
+func New(opts Options) (*Master, error) {
+	root := opts.Root
+	if root == "" {
+		root = defaultMasterRoot
+	}
+	if opts.Store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	manageAddr := opts.ManageAddr
+	if manageAddr == "" {
+		manageAddr = ":9000"
+	}
+	grpcAddr := opts.GRPCAddr
+	if grpcAddr == "" {
+		grpcAddr = ":10992"
+	}
+	return &Master{
+		root:       root,
+		store:      opts.Store,
+		hub:        NewHub(),
+		manageAddr: manageAddr,
+		grpcAddr:   grpcAddr,
+		webRoot:    opts.WebRoot,
+	}, nil
 }
 
 func (m *Master) PublishDNS(ctx context.Context, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
@@ -46,23 +78,18 @@ func (m *Master) PublishHTTP(ctx context.Context, hostname string, bin []byte) (
 }
 
 func (m *Master) publish(ctx context.Context, kind replication.EventType, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
-	if m.store == nil || m.publisher == nil {
+	if m.store == nil || m.hub == nil {
 		return nil, fmt.Errorf("master is not configured")
 	}
 	key, err := objectKey(kind, hostname)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.store.Put(ctx, key, bin); err != nil {
+	if err := m.store.Put(ctx, key, bytes.NewReader(bin)); err != nil {
 		return nil, err
 	}
-	ts := time.Now().Unix()
-	if m.wal != nil {
-		if err := m.wal.Append(newWALRecord(hostname, key, kind, ts)); err != nil {
-			return nil, err
-		}
-	}
-	return m.publisher.Publish(&replication.ChangeEnvelope{
+	ts := envelopeTimestampUnix()
+	return m.hub.Publish(&replication.ChangeEnvelope{
 		Cluster:       "default",
 		Type:          kind,
 		Hostname:      hostname,
@@ -84,36 +111,59 @@ func objectKey(kind replication.EventType, hostname string) (string, error) {
 	}
 }
 
-func newMaster(root string, store ObjectStore, publisher Publisher) (*Master, error) {
-	wal, err := NewWAL(root)
+func (m *Master) Start(ctx context.Context) error {
+	if m == nil {
+		return fmt.Errorf("master is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	manageServer, err := NewManageServer(m, m.hub, m.webRoot)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &Master{
-		store:     store,
-		publisher: publisher,
-		wal:       wal,
-	}, nil
-}
+	httpServer := &http.Server{
+		Addr:              m.manageAddr,
+		Handler:           manageServer.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
-func mustNew(root string, store ObjectStore, publisher Publisher) *Master {
-	m, err := newMaster(root, store, publisher)
+	grpcListener, err := net.Listen("tcp", m.grpcAddr)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	return m
-}
+	defer grpcListener.Close()
 
-func (m *Master) WALStatus() WALStatus {
-	if m == nil || m.wal == nil {
-		return WALStatus{}
-	}
-	return m.wal.Status()
-}
+	grpcServer := grpc.NewServer()
+	replication.NewServer(m.hub).Register(grpcServer)
+	defer grpcServer.GracefulStop()
 
-func (m *Master) WALFiles() []string {
-	if m == nil || m.wal == nil {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		log.Printf("master manage api listening on %s", m.manageAddr)
+		err := httpServer.ListenAndServe()
+		if groupCtx.Err() != nil || errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	})
+	group.Go(func() error {
+		log.Printf("master grpc listening on %s", m.grpcAddr)
+		err := grpcServer.Serve(grpcListener)
+		if groupCtx.Err() != nil || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
+	})
+	group.Go(func() error {
+		<-groupCtx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+		grpcServer.GracefulStop()
 		return nil
-	}
-	return m.wal.Files()
+	})
+
+	return group.Wait()
 }

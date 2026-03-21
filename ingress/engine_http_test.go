@@ -3,6 +3,7 @@ package ingress_test
 import (
 	ingress "aaa/ingress"
 	"aaa/ingress/builder"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -114,6 +115,104 @@ func TestHTTPEngineLookupBackendWildcardAndSingleHostPriority(t *testing.T) {
 	}
 	if body := recWildcard.Body.String(); body != "wildcard-backend" {
 		t.Fatalf("ServeHTTP(wildcard) body = %q, want %q", body, "wildcard-backend")
+	}
+}
+
+func TestHTTPEnginePrefixPolicyPrunesMatchedPrefix(t *testing.T) {
+	root := t.TempDir()
+	store, err := ingress.NewFSStore(root)
+	if err != nil {
+		t.Fatalf("NewFSStore() error = %v", err)
+	}
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	t.Cleanup(backend.Close)
+
+	err = store.WriteHTTP("aa.com", builder.NewHTTPRoute().
+		WithName("aa.com").
+		AddPolicy(builder.NewHTTPPolicy().
+			WithBackend(backend.URL).
+			WithPrefixPath("/ingress")))
+	if err != nil {
+		t.Fatalf("WriteHTTP() error = %v", err)
+	}
+
+	engine := ingress.NewHTTPEngine(ingress.HTTPEngineOptions{Root: root})
+
+	testCases := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "prefix root", target: "http://aa.com/ingress", want: "/"},
+		{name: "prefix nested path", target: "http://aa.com/ingress/v1/users", want: "/v1/users"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.target, nil)
+			req.Host = "aa.com"
+
+			rec := httptest.NewRecorder()
+			engine.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ServeHTTP() status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if body := rec.Body.String(); body != tc.want {
+				t.Fatalf("ServeHTTP() body = %q, want %q", body, tc.want)
+			}
+		})
+	}
+}
+
+func TestHTTPEnginePrefixPolicyPrunesAndAppendsToBackendBasePath(t *testing.T) {
+	root := t.TempDir()
+	store, err := ingress.NewFSStore(root)
+	if err != nil {
+		t.Fatalf("NewFSStore() error = %v", err)
+	}
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	t.Cleanup(backend.Close)
+
+	err = store.WriteHTTP("aa.com", builder.NewHTTPRoute().
+		WithName("aa.com").
+		AddPolicy(builder.NewHTTPPolicy().
+			WithBackend(backend.URL+"/base/path").
+			WithPrefixPath("/ingress")))
+	if err != nil {
+		t.Fatalf("WriteHTTP() error = %v", err)
+	}
+
+	engine := ingress.NewHTTPEngine(ingress.HTTPEngineOptions{Root: root})
+
+	testCases := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "prefix root", target: "http://aa.com/ingress", want: "/base/path/"},
+		{name: "prefix nested path", target: "http://aa.com/ingress/v1/users", want: "/base/path/v1/users"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.target, nil)
+			req.Host = "aa.com"
+
+			rec := httptest.NewRecorder()
+			engine.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ServeHTTP() status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if body := rec.Body.String(); body != tc.want {
+				t.Fatalf("ServeHTTP() body = %q, want %q", body, tc.want)
+			}
+		})
 	}
 }
 
