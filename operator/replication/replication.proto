@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package operator.replication;
+
+option go_package = "aaa/operator/replication;replication";
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_DNS = 1;
+  EVENT_TYPE_TLS = 2;
+  EVENT_TYPE_HTTP = 3;
+}
+
+message ChangeEnvelope {
+  string cluster = 1;
+  EventType type = 2;
+  string hostname = 3;
+  bytes bin = 4;
+  int64 timestamp_unix = 5;
+}
+
+message PushChangeRequest {
+  string pod_ip = 1;
+  string agent_id = 2;
+}
+
+service ReplicationService {
+  rpc Subscribe(PushChangeRequest) returns (stream ChangeEnvelope);
+}
