@@ -6,7 +6,6 @@ import { createHTTPDraftPolicy, createHTTPPayload, type HTTPDraftPolicy } from '
 
 export default function HTTPPage() {
   const [hostname, setHostname] = useState('')
-  const [name, setName] = useState('')
   const [policies, setPolicies] = useState<HTTPDraftPolicy[]>([])
   const [creating, setCreating] = useState<HTTPDraftPolicy | null>(null)
   const [loading, setLoading] = useState(false)
@@ -27,7 +26,6 @@ export default function HTTPPage() {
     setCreating(null)
     try {
       const data = (await requestResource('http', trimmed)) as HTTPPayload
-      setName(data.name || '')
       setPolicies((data.policies || []).map((policy) => createHTTPDraftPolicy(policy)))
       setDirty(false)
       setMessage(`Loaded HTTP policies for ${trimmed}.`)
@@ -48,7 +46,7 @@ export default function HTTPPage() {
     setError(null)
     setMessage(null)
     try {
-      await publishResource('http', trimmed, JSON.stringify(createHTTPPayload(name, policies)))
+      await publishResource('http', trimmed, JSON.stringify(createHTTPPayload(trimmed, policies)))
       setDirty(false)
       setMessage(`Flushed HTTP policies for ${trimmed}.`)
     } catch (err) {
@@ -106,10 +104,6 @@ export default function HTTPPage() {
             Add Policy
           </button>
         </div>
-
-        <Field label="Zone Name" className="mt-6">
-          <input value={name} onChange={(e) => { setName(e.target.value); setDirty(true) }} className={inputClassName} />
-        </Field>
 
         <div className="mt-6 space-y-4">
           {creating ? (

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,6 +48,12 @@ func NewManageServer(m *Master, hub *Hub, webRoot string) (*ManageServer, error)
 
 func (s *ManageServer) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			logManageRequest(r)
+			recorder := &manageLogResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			defer logManageResponse(r, recorder.statusCode, http.StatusText(recorder.statusCode))
+			w = recorder
+		}
 		setCORSHeaders(w, r)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -218,4 +225,36 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	}
+}
+
+type manageLogResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *manageLogResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func logManageRequest(r *http.Request) {
+	log.Printf("%s request %s %s", masterLogPrefix, r.Method, fullManagePath(r))
+}
+
+func logManageResponse(r *http.Request, statusCode int, statusText string) {
+	color := masterLogOK
+	if statusCode >= http.StatusBadRequest {
+		color = masterLogFail
+	}
+	log.Printf("%s response %s %s %s[%d] %s%s", masterLogPrefix, r.Method, fullManagePath(r), color, statusCode, statusText, masterLogReset)
+}
+
+func fullManagePath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	if r.URL.RawQuery == "" {
+		return r.URL.Path
+	}
+	return r.URL.Path + "?" + r.URL.RawQuery
 }

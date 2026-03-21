@@ -24,7 +24,7 @@ export default function TLSPage() {
     setMessage(null)
     try {
       const data = (await requestResource('tls', trimmed)) as TLSPayload
-      setDraft(createTLSDraft(data))
+      setDraft(createTLSDraft({ ...data, name: trimmed, sni: trimmed }))
       setDirty(false)
       setMessage(`Loaded TLS resource for ${trimmed}.`)
     } catch (err) {
@@ -44,7 +44,17 @@ export default function TLSPage() {
     setError(null)
     setMessage(null)
     try {
-      await publishResource('tls', trimmed, JSON.stringify(normalizeTLSDraft(draft)))
+      await publishResource(
+        'tls',
+        trimmed,
+        JSON.stringify(
+          normalizeTLSDraft({
+            ...draft,
+            name: trimmed,
+            sni: trimmed,
+          }),
+        ),
+      )
       setDirty(false)
       setMessage(`Flushed TLS resource for ${trimmed}.`)
     } catch (err) {
@@ -89,8 +99,12 @@ export default function TLSPage() {
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <Field label="Name"><input value={draft.name} onChange={(e) => patch({ name: e.target.value })} className={inputClassName} /></Field>
-          <Field label="SNI"><input value={draft.sni} onChange={(e) => patch({ sni: e.target.value })} className={inputClassName} /></Field>
+          <Field label="Name">
+            <input value={hostname.trim()} readOnly className={readOnlyInputClassName} />
+          </Field>
+          <Field label="SNI">
+            <input value={hostname.trim()} readOnly className={readOnlyInputClassName} />
+          </Field>
           <Field label="Kind">
             <select value={draft.kind} onChange={(e) => patch({ kind: e.target.value })} className={inputClassName}>
               {tlsKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
@@ -121,3 +135,6 @@ function Field({ label, children, className = '' }: { label: string; children: R
 
 const inputClassName =
   'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm text-slate-900 outline-none transition focus:border-cyan-500'
+
+const readOnlyInputClassName =
+  'w-full rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 font-mono text-sm text-slate-500 outline-none'

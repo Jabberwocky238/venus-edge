@@ -22,6 +22,16 @@ import (
 
 const defaultMasterRoot = "."
 
+const (
+	masterLogPrefix = "\033[38;5;220m[MASTER]\033[0m"
+	masterLogOK     = "\033[32m"
+	masterLogFail   = "\033[31m"
+	masterLogReset  = "\033[0m"
+	masterDNSLabel  = "\033[38;5;117m[DNS]\033[0m"
+	masterHTTPLabel = "\033[38;5;229m[HTTP]\033[0m"
+	masterTLSLabel  = "\033[38;5;183m[TLS]\033[0m"
+)
+
 type Options struct {
 	Root       string
 	Store      objectstore.Store
@@ -71,19 +81,23 @@ func (m *Master) publish(ctx context.Context, kind replication.EventType, hostna
 	}
 	key, err := objectKey(kind, hostname)
 	if err != nil {
+		logMasterPublish(kind, hostname, "", nil, err)
 		return nil, err
 	}
 	if err := m.store.Put(ctx, key, bytes.NewReader(bin)); err != nil {
+		logMasterPublish(kind, hostname, key, nil, err)
 		return nil, err
 	}
 	ts := envelopeTimestampUnix()
-	return m.hub.Publish(&replication.ChangeEnvelope{
+	resp := m.hub.Publish(&replication.ChangeEnvelope{
 		Cluster:       "default",
 		Type:          kind,
 		Hostname:      hostname,
 		Bin:           bin,
 		TimestampUnix: ts,
-	}), nil
+	})
+	logMasterPublish(kind, hostname, key, resp, nil)
+	return resp, nil
 }
 
 func objectKey(kind replication.EventType, hostname string) (string, error) {
@@ -154,4 +168,31 @@ func (m *Master) Start(ctx context.Context) error {
 	})
 
 	return group.Wait()
+}
+
+func logMasterPublish(kind replication.EventType, hostname, key string, resp *replication.PushChangeResponse, err error) {
+	if err != nil {
+		log.Printf("%s %spublish%s %s hostname=%s key=%s err=%v", masterLogPrefix, masterLogFail, masterLogReset, masterEventLabel(kind), hostname, key, err)
+		return
+	}
+	accepted := false
+	message := ""
+	if resp != nil {
+		accepted = resp.Accepted
+		message = resp.Message
+	}
+	log.Printf("%s %spublish%s %s hostname=%s key=%s accepted=%t message=%q", masterLogPrefix, masterLogOK, masterLogReset, masterEventLabel(kind), hostname, key, accepted, message)
+}
+
+func masterEventLabel(kind replication.EventType) string {
+	switch kind {
+	case replication.EventType_EVENT_TYPE_DNS:
+		return masterDNSLabel
+	case replication.EventType_EVENT_TYPE_TLS:
+		return masterTLSLabel
+	case replication.EventType_EVENT_TYPE_HTTP:
+		return masterHTTPLabel
+	default:
+		return kind.String()
+	}
 }

@@ -90,6 +90,12 @@ func (e *HTTPEngine) Handler() http.Handler {
 			req.SetURL(target)
 			req.Out.URL.Path = joinBackendPath(target.Path, rewrittenPath)
 			req.Out.URL.RawPath = joinBackendPath(target.RawPath, rewrittenRawPath)
+			forwardedHost := forwardedHostName(req.In)
+			req.Out.Host = forwardedHost
+			req.Out.Header.Set("Host", forwardedHost)
+			req.Out.Header.Set("X-Forwarded-Host", forwardedHost)
+			req.Out.Header.Set("X-Forwarded-For", req.In.RemoteAddr)
+			req.Out.Header.Set("X-Forwarded-Proto", req.In.URL.Scheme)
 		}
 		proxy.Director = nil
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -392,4 +398,14 @@ func fullRequestPath(r *http.Request) string {
 		return r.URL.Path
 	}
 	return r.URL.Path + "?" + r.URL.RawQuery
+}
+
+func forwardedHostName(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if r.TLS != nil && r.TLS.ServerName != "" {
+		return r.TLS.ServerName
+	}
+	return r.Host
 }
