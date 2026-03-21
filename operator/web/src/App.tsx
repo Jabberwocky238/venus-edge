@@ -1,7 +1,7 @@
 import { NavLink, Navigate, Outlet, Route, Routes } from 'react-router-dom'
-import DNSPage from './pages/dns.tsx'
-import HTTPPage from './pages/http.tsx'
-import TLSPage from './pages/tls.tsx'
+import DNSPage from './pages/DNS.tsx'
+import HTTPPage from './pages/HTTP.tsx'
+import TLSPage from './pages/TLS.tsx'
 
 function AppLayout() {
   const navClassName = ({ isActive }: { isActive: boolean }) =>

@@ -46,7 +46,14 @@ func NewManageServer(m *Master, hub *Hub, webRoot string) (*ManageServer, error)
 }
 
 func (s *ManageServer) Handler() http.Handler {
-	return s.mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w, r)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *ManageServer) ListenAndServe(addr string) error {
@@ -200,4 +207,15 @@ func writeAPIError(w http.ResponseWriter, err error) {
 		return
 	}
 	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	switch origin {
+	case "http://localhost:5173", "http://127.0.0.1:5173":
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	}
 }
