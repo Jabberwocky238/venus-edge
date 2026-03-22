@@ -17,11 +17,13 @@ message ChangeEnvelope {
   string hostname = 3;
   bytes bin = 4;
   int64 timestamp_unix = 5;
+  uint64 version_index = 6;
 }
 
 message PushChangeRequest {
   string pod_ip = 1;
   string agent_id = 2;
+  uint64 version_index = 3;
 }
 
 service ReplicationService {

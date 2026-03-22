@@ -2,8 +2,28 @@
 
 set -euo pipefail
 
+# map
+declare -A mapping=(
+  [ingress]="ingress/schema/ingress.capnp"
+  [wal]="operator/replication/wal.capnp"
+  [DNS]="DNS/schema/dns.capnp"
+)
+
+caller="${1:-}"
+
+if [[ -z "${caller}" ]]; then
+  echo "usage: $0 <ingress|wal|DNS>" >&2
+  exit 1
+fi
+
+if [[ -z "${mapping[$caller]:-}" ]]; then
+  echo "unknown schema target: ${caller}" >&2
+  echo "available: ingress wal DNS" >&2
+  exit 1
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-schema="${script_dir}/ingress/schema/ingress.capnp"
+schema="${script_dir}/${mapping[$caller]}"
 output_dir="${script_dir}"
 
 gopath="$(go env GOPATH)"
