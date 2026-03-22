@@ -177,7 +177,7 @@ func (e *Engine) Stop() error {
 	return err
 }
 
-func newReaderLookup(r io.Reader) (zoneLookup, error) {
+func newReaderLookup(r io.Reader) (*readerHandler, error) {
 	zone, err := Read(r)
 	if err != nil {
 		return nil, err
@@ -265,7 +265,7 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (
 	_ = w.WriteMsg(resp)
 }
 
-func (h *storeHandler) lookupForQuestion(name string) (zoneLookup, bool, error) {
+func (h *storeHandler) lookupForQuestion(name string) (*readerHandler, bool, error) {
 	for _, zone := range CandidateZones(name) {
 		f, err := h.store.OpenZone(zone)
 		if err != nil {
