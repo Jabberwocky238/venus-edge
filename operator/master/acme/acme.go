@@ -12,7 +12,10 @@ import (
 )
 
 const (
-	acmeLogPrefix = "\033[38;5;45m[ACME]\033[0m"
+	acmeLogPrefix = "\033[38;5;226m[ACME]\033[0m"
+	acmeLogOK     = "\033[32m"
+	acmeLogFail   = "\033[31m"
+	acmeLogReset  = "\033[0m"
 	acmeStateDir  = "operator/master/acme"
 )
 
@@ -101,14 +104,18 @@ func isNotExist(err error) bool {
 }
 
 func HandleHTTPPublish(ctx context.Context, c Controller, hostname string, change HTTPChange) error {
+	logACMEStart("auto-request [%s]", hostname)
 	if c == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
+		logACMEDone("auto-request skipped [%s]", hostname)
 		return nil
 	}
 	tlsChange, err := c.ReadTLS(ctx, hostname)
 	if err == nil && strings.TrimSpace(tlsChange.CertPEM) != "" && strings.TrimSpace(tlsChange.KeyPEM) != "" {
+		logACMEDone("auto-request skipped [%s] reason=certificate-exists", hostname)
 		return nil
 	}
 	if err != nil && !isNotExist(err) {
+		logACMEError(err, "auto-request [%s]", hostname)
 		return err
 	}
 
@@ -120,9 +127,10 @@ func HandleHTTPPublish(ctx context.Context, c Controller, hostname string, chang
 		CreatedAt: time.Now().Unix(),
 	}
 	if err := saveJSONFile(filepath.Join(c.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json"), req); err != nil {
+		logACMEError(err, "auto-request [%s]", hostname)
 		return err
 	}
-	log.Printf("%s auto request hostname=%s challenge=http-01 provider=%s", acmeLogPrefix, hostname, req.Provider)
+	logACMEDone("auto-request [%s] challenge=http-01 provider=%s", hostname, req.Provider)
 	return nil
 }
 
@@ -178,4 +186,20 @@ func sanitizeKey(key string) string {
 		return "empty"
 	}
 	return key
+}
+
+func logACMEStart(format string, args ...any) {
+	log.Printf("%s start "+format, append([]any{acmeLogPrefix}, args...)...)
+}
+
+func logACMEDone(format string, args ...any) {
+	log.Printf("%s %sdone%s "+format, append([]any{acmeLogPrefix, acmeLogOK, acmeLogReset}, args...)...)
+}
+
+func logACMEError(err error, format string, args ...any) {
+	if err == nil {
+		return
+	}
+	args = append(args, err)
+	log.Printf("%s %serror%s "+format+" err=%v", append([]any{acmeLogPrefix, acmeLogFail, acmeLogReset}, args...)...)
 }

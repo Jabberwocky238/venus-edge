@@ -17,9 +17,11 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 	if hostname == "" || token == "" || fixContent == "" {
 		return fmt.Errorf("hostname, token and fixContent are required")
 	}
+	logACMEStart("http-01 present [%s] token=%s", hostname, token)
 	return run(ctx, func(ctx context.Context) error {
 		change, err := readHTTPChangeOrEmpty(ctx, s.controller, hostname)
 		if err != nil {
+			logACMEError(err, "http-01 present [%s] token=%s", hostname, token)
 			return err
 		}
 		challengePolicy := HTTPPolicy{
@@ -39,6 +41,7 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 		change.Name = hostname
 		change.Policies = next
 		if err := s.controller.PublishHTTPChange(ctx, hostname, change); err != nil {
+			logACMEError(err, "http-01 present [%s] token=%s", hostname, token)
 			return err
 		}
 		state := challengeState{
@@ -48,7 +51,12 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 			FixContent: fixContent,
 			CreatedAt:  unixNow(),
 		}
-		return saveChallengeState(s.root(), state, http01Key(hostname, token))
+		if err := saveChallengeState(s.root(), state, http01Key(hostname, token)); err != nil {
+			logACMEError(err, "http-01 present [%s] token=%s", hostname, token)
+			return err
+		}
+		logACMEDone("http-01 present [%s] token=%s", hostname, token)
+		return nil
 	})
 }
 
@@ -59,16 +67,20 @@ func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) erro
 	if hostname == "" || token == "" {
 		return fmt.Errorf("hostname and token are required")
 	}
+	logACMEStart("http-01 cleanup [%s] token=%s", hostname, token)
 	return run(ctx, func(ctx context.Context) error {
 		state, err := loadChallengeState(s.root(), http01Key(hostname, token))
 		if err != nil {
 			if isNotExist(err) {
+				logACMEDone("http-01 cleanup [%s] token=%s skipped=not-found", hostname, token)
 				return nil
 			}
+			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
 		change, err := readHTTPChangeOrEmpty(ctx, s.controller, state.Hostname)
 		if err != nil {
+			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
 		filtered := make([]HTTPPolicy, 0, len(change.Policies))
@@ -81,9 +93,15 @@ func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) erro
 		change.Name = state.Hostname
 		change.Policies = filtered
 		if err := s.controller.PublishHTTPChange(ctx, state.Hostname, change); err != nil {
+			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
-		return deleteChallengeState(s.root(), http01Key(hostname, token))
+		if err := deleteChallengeState(s.root(), http01Key(hostname, token)); err != nil {
+			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
+			return err
+		}
+		logACMEDone("http-01 cleanup [%s] token=%s", hostname, token)
+		return nil
 	})
 }
 

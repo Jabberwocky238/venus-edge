@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"aaa/ingress/schema"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -92,11 +94,11 @@ func OpenHTTPZoneFile(root, zone string) (io.ReadCloser, error) {
 }
 
 func TLSZoneFilePath(root, zone string) string {
-	return filepath.Join(root, DefaultTLSDir, sanitizeZoneName(zone)+".bin")
+	return filepath.Join(root, DefaultTLSDir, zoneStorageName(zone)+".bin")
 }
 
 func HTTPZoneFilePath(root, zone string) string {
-	return filepath.Join(root, DefaultHTTPDir, sanitizeZoneName(zone)+".bin")
+	return filepath.Join(root, DefaultHTTPDir, zoneStorageName(zone)+".bin")
 }
 
 func CandidateZones(name string) []string {
@@ -199,6 +201,11 @@ func writeHTTPZoneTo(w io.Writer, route HTTPRoute) error {
 
 func sanitizeZoneName(zone string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(zone), "."))
+}
+
+func zoneStorageName(zone string) string {
+	sum := sha256.Sum256([]byte(sanitizeZoneName(zone)))
+	return hex.EncodeToString(sum[:])
 }
 
 func retryOpenFile(path string) (io.ReadCloser, error) {

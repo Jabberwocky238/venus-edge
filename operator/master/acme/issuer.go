@@ -50,12 +50,16 @@ type Issuer struct {
 }
 
 func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
+	logACMEStart("issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
 	if strings.TrimSpace(cfg.Email) == "" {
-		return nil, fmt.Errorf("email is required")
+		err := fmt.Errorf("email is required")
+		logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
+		return nil, err
 	}
 
 	dirURL, err := resolveDirectoryURL(cfg)
 	if err != nil {
+		logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
 		return nil, err
 	}
 	cfg.DirectoryURL = dirURL
@@ -63,6 +67,7 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 	if cfg.AccountKey == nil {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
+			logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
 			return nil, fmt.Errorf("generate account key: %w", err)
 		}
 		cfg.AccountKey = key
@@ -75,10 +80,12 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 		UserAgent:    cfg.UserAgent,
 	}
 
-	return &Issuer{
+	issuer := &Issuer{
 		config: cfg,
 		client: client,
-	}, nil
+	}
+	logACMEDone("issuer init provider=%s directory=%s", cfg.Provider, cfg.DirectoryURL)
+	return issuer, nil
 }
 
 func (i *Issuer) Client() *xacme.Client {
@@ -97,11 +104,14 @@ func (i *Issuer) Config() IssuerConfig {
 
 func (i *Issuer) Register(ctx context.Context) (*xacme.Account, error) {
 	if i == nil || i.client == nil {
-		return nil, fmt.Errorf("issuer is not initialized")
+		err := fmt.Errorf("issuer is not initialized")
+		logACMEError(err, "issuer register")
+		return nil, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	logACMEStart("issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
 
 	acct := &xacme.Account{
 		Contact: []string{"mailto:" + strings.TrimSpace(i.config.Email)},
@@ -117,7 +127,13 @@ func (i *Issuer) Register(ctx context.Context) (*xacme.Account, error) {
 	if prompt == nil {
 		prompt = xacme.AcceptTOS
 	}
-	return i.client.Register(ctx, acct, prompt)
+	account, err := i.client.Register(ctx, acct, prompt)
+	if err != nil {
+		logACMEError(err, "issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
+		return nil, err
+	}
+	logACMEDone("issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
+	return account, nil
 }
 
 func resolveDirectoryURL(cfg IssuerConfig) (string, error) {

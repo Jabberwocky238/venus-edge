@@ -23,8 +23,10 @@ struct HttpPolicy {
     header @3 :Header;
   }
 
-  fixContent @4 :Text;
-  allowRawAccess @5 :Bool;
+  # if it is not empty, the request will be rewritten to this content
+  fixContent @4 :Text;  
+  # if it is true, 80 port access will be allowed
+  allowRawAccess @5 :Bool; 
 }
 
 struct Pathname {

@@ -1,6 +1,8 @@
 package dns
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -63,7 +65,7 @@ func OpenZoneFile(root, zone string) (io.ReadCloser, error) {
 }
 
 func ZoneFilePath(root, zone string) string {
-	return filepath.Join(root, DefaultZoneDir, sanitizeZoneName(zone)+".bin")
+	return filepath.Join(root, DefaultZoneDir, zoneStorageName(zone)+".bin")
 }
 
 func CandidateZones(name string) []string {
@@ -161,6 +163,11 @@ func setZoneIndexes(zone Zone, indexes map[RecordType][]uint32) error {
 
 func sanitizeZoneName(zone string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(zone), "."))
+}
+
+func zoneStorageName(zone string) string {
+	sum := sha256.Sum256([]byte(sanitizeZoneName(zone)))
+	return hex.EncodeToString(sum[:])
 }
 
 func retryOpenFile(path string) (io.ReadCloser, error) {

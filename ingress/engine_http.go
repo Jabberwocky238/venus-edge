@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -76,6 +77,9 @@ func (e *HTTPEngine) Handler() http.Handler {
 
 		// 禁止非 TLS 访问，除非 explicitly 允许了 allowRawAccess
 		if !match.allowRawAccess && r.TLS == nil {
+			if closeRawHTTPConn(recorder) {
+				return // 连接已成功关闭，直接返回
+			}
 			http.NotFound(recorder, r)
 			return
 		}
@@ -371,6 +375,14 @@ func (w *httpLogResponseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
+func (w *httpLogResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijack")
+	}
+	return hijacker.Hijack()
+}
+
 func (l *singleConnListener) Accept() (net.Conn, error) {
 	if l.accepted || l.conn == nil {
 		return nil, net.ErrClosed
@@ -426,6 +438,19 @@ func fullRequestPath(r *http.Request) string {
 		return r.URL.Path
 	}
 	return r.URL.Path + "?" + r.URL.RawQuery
+}
+
+func closeRawHTTPConn(w http.ResponseWriter) bool {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return false
+	}
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func forwardedHostName(r *http.Request) string {
