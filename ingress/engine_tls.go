@@ -153,7 +153,7 @@ func (e *TLSEngine) acceptOne() (net.Conn, error) {
 		if err != nil {
 			logTLSRoute(serverName, "https", err)
 			_ = rawConn.Close()
-			return nil, fmt.Errorf("terminate https for %q: %w", serverName, err)
+			return nil, ErrConnHandled
 		}
 		logTLSRoute(serverName, "https", nil)
 		return tlsConn, nil
