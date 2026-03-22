@@ -11,7 +11,6 @@ FILES=(
   "ns.yaml"
   "venus-edge-master.yaml"
   "venus-edge-agent.yaml"
-  "venus-edge-master-cilium-clustermesh.yaml"
   "venus-edge-agent-cilium-clustermesh.yaml"
   "run.sh"
 )
