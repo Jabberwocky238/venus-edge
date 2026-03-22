@@ -86,7 +86,11 @@ func newLegoIssuer(email string, accountKey crypto.PrivateKey, provider string, 
 	}
 	config := lego.NewConfig(user)
 	config.Certificate.KeyType = certcrypto.EC256
-	config.HTTPClient = httpClient
+	if httpClient != nil {
+		config.HTTPClient = httpClient
+	} else {
+		config.HTTPClient = http.DefaultClient
+	}
 
 	switch Provider(strings.TrimSpace(provider)) {
 	case "", ProviderZeroSSL:
