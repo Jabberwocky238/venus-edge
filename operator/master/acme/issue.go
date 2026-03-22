@@ -16,6 +16,9 @@ import (
 	"sync"
 	"time"
 
+	ingress "aaa/ingress"
+	ingressbuilder "aaa/ingress/builder"
+
 	xacme "golang.org/x/crypto/acme"
 )
 
@@ -40,9 +43,9 @@ func issueLock(hostname string) *sync.Mutex {
 	return &stateAny.(*issueState).mu
 }
 
-func HandleHTTPPublish(ctx context.Context, c Controller, cfg Config, hostname string, change HTTPChange) error {
+func HandleHTTPPublish(ctx context.Context, c Controller, cfg Config, hostname string, route *ingressbuilder.HTTPRouteBuilder) error {
 	logACMEStart("auto-request [%s]", hostname)
-	if c == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
+	if c == nil || hostname == "" || route == nil || len(route.Policies) == 0 || isACMEChallengeRoute(route) {
 		logACMEDone("auto-request skipped [%s]", hostname)
 		return nil
 	}
@@ -54,11 +57,11 @@ func HandleHTTPPublish(ctx context.Context, c Controller, cfg Config, hostname s
 	req := certificateRequest{
 		Hostname:  hostname,
 		Status:    "pending",
-		Provider:  defaultProvider(cfg),
+		Provider:  providerName(cfg),
 		Challenge: string(challengeTypeHTTP01),
 		CreatedAt: time.Now().Unix(),
 	}
-	requestPath := filepath.Join(c.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json")
+	requestPath := filepath.Join(c.Root(), "requests", sanitizeKey(hostname)+".json")
 	if err := saveJSONFile(requestPath, req); err != nil {
 		logACMEError(err, "auto-request [%s]", hostname)
 		return err
@@ -76,7 +79,7 @@ func HandleHTTPPublish(ctx context.Context, c Controller, cfg Config, hostname s
 	issueCtx, cancel = context.WithTimeout(issueCtx, 5*time.Minute)
 	defer cancel()
 
-	currentTLS, err := c.ReadTLS(issueCtx, hostname)
+	currentTLS, err := c.ReadTLSRoute(issueCtx, hostname)
 	if err == nil && !certificateNeedsRenewal(currentTLS.CertPEM) {
 		req.Status = "reused"
 		_ = saveJSONFile(requestPath, req)
@@ -105,13 +108,9 @@ func HandleHTTPPublish(ctx context.Context, c Controller, cfg Config, hostname s
 }
 
 func issueAndPublishTLS(ctx context.Context, c Controller, cfg Config, hostname string) error {
-	provider := strings.TrimSpace(cfg.DefaultProvider)
-	if provider == "" {
-		provider = string(ProviderZeroSSL)
-	}
+	provider := providerName(cfg)
 	accountKey, err := loadOrCreateECDSAKey(filepath.Join(
 		c.Root(),
-		acmeStateDir,
 		"accounts",
 		sanitizeKey(provider)+".pem",
 	))
@@ -210,16 +209,15 @@ func issueAndPublishTLS(ctx context.Context, c Controller, cfg Config, hostname 
 		return err
 	}
 
-	next := TLSChange{
-		Name:    hostname,
-		SNI:     hostname,
-		Kind:    "https",
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-	}
-	current, err := c.ReadTLS(ctx, hostname)
+	next := ingressbuilder.NewTLSRoute().
+		WithHostName(hostname).
+		WithSNI(hostname).
+		WithKind(ingress.TlsPolicy_Kind_https).
+		WithCertPEM(certPEM).
+		WithKeyPEM(keyPEM)
+	current, err := c.ReadTLSRoute(ctx, hostname)
 	if err == nil {
-		if strings.TrimSpace(current.Kind) != "" {
+		if current.Kind != 0 {
 			next.Kind = current.Kind
 		}
 		if strings.TrimSpace(current.BackendHostname) != "" {
@@ -232,10 +230,18 @@ func issueAndPublishTLS(ctx context.Context, c Controller, cfg Config, hostname 
 		return fmt.Errorf("read existing tls: %w", err)
 	}
 
-	if strings.TrimSpace(next.Kind) == "" {
-		next.Kind = "https"
+	if next.Kind == 0 {
+		next.Kind = ingress.TlsPolicy_Kind_https
 	}
-	return c.PublishTLSChange(ctx, hostname, next)
+	return c.PublishTLSRoute(ctx, hostname, next)
+}
+
+func providerName(cfg Config) string {
+	provider := strings.TrimSpace(cfg.DefaultProvider)
+	if provider == "" {
+		return string(ProviderZeroSSL)
+	}
+	return provider
 }
 
 func certificateNeedsRenewal(certPEM string) bool {

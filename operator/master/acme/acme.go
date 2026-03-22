@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	ingressbuilder "aaa/ingress/builder"
 )
 
 const (
@@ -15,7 +17,6 @@ const (
 	acmeLogOK     = "\033[32m"
 	acmeLogFail   = "\033[31m"
 	acmeLogReset  = "\033[0m"
-	acmeStateDir  = "operator/master/acme"
 )
 
 type Manager struct {
@@ -44,27 +45,12 @@ type certificateRequest struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-type HTTPPolicy struct {
-	Backend        string
-	PathnameKind   string
-	Pathname       string
-	QueryItems     []HTTPKV
-	HeaderItems    []HTTPKV
-	FixContent     string
-	AllowRawAccess bool
-}
-
-type HTTPKV struct {
-	Key   string
-	Value string
-}
-
 type Controller interface {
 	Root() string
-	ReadHTTP(context.Context, string) (HTTPChange, error)
-	PublishHTTPChange(context.Context, string, HTTPChange) error
-	ReadTLS(context.Context, string) (TLSChange, error)
-	PublishTLSChange(context.Context, string, TLSChange) error
+	ReadHTTPRoute(context.Context, string) (*ingressbuilder.HTTPRouteBuilder, error)
+	PublishHTTPRoute(context.Context, string, *ingressbuilder.HTTPRouteBuilder) error
+	ReadTLSRoute(context.Context, string) (*ingressbuilder.TLSRouteBuilder, error)
+	PublishTLSRoute(context.Context, string, *ingressbuilder.TLSRouteBuilder) error
 }
 
 func New(controller Controller) *Manager {
@@ -93,9 +79,12 @@ func isNotExist(err error) bool {
 	return err != nil && os.IsNotExist(err)
 }
 
-func isACMEChallengeChange(change HTTPChange) bool {
-	for _, policy := range change.Policies {
-		if strings.HasPrefix(policy.Pathname, "/.well-known/acme-challenge/") && policy.FixContent != "" {
+func isACMEChallengeRoute(route *ingressbuilder.HTTPRouteBuilder) bool {
+	if route == nil {
+		return false
+	}
+	for _, policy := range route.Policies {
+		if policy != nil && strings.HasPrefix(policy.Pathname, "/.well-known/acme-challenge/") && policy.FixContent != "" {
 			return true
 		}
 	}
@@ -103,12 +92,12 @@ func isACMEChallengeChange(change HTTPChange) bool {
 }
 
 func saveChallengeState(root string, state challengeState, key string) error {
-	return saveJSONFile(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"), state)
+	return saveJSONFile(filepath.Join(root, "http01", sanitizeKey(key)+".json"), state)
 }
 
 func loadChallengeState(root, key string) (challengeState, error) {
 	var state challengeState
-	data, err := os.ReadFile(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"))
+	data, err := os.ReadFile(filepath.Join(root, "http01", sanitizeKey(key)+".json"))
 	if err != nil {
 		return challengeState{}, err
 	}
@@ -119,7 +108,7 @@ func loadChallengeState(root, key string) (challengeState, error) {
 }
 
 func deleteChallengeState(root, key string) error {
-	err := os.Remove(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"))
+	err := os.Remove(filepath.Join(root, "http01", sanitizeKey(key)+".json"))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}

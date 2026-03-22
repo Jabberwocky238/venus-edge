@@ -1,63 +1,101 @@
 package master
 
 import (
-	acme "aaa/operator/master/acme"
+	"bytes"
 	"context"
+	"log"
+	"path/filepath"
+
+	ingress "aaa/ingress"
+	ingressbuilder "aaa/ingress/builder"
+	acme "aaa/operator/master/acme"
+	"aaa/operator/replication"
 )
 
 func (m *Master) Root() string {
-	if m == nil || m.root == "" {
-		return defaultMasterRoot
-	}
-	return m.root
+	return filepath.Join(m.root, "acme")
 }
 
-func (m *Master) ReadHTTP(ctx context.Context, hostname string) (acme.HTTPChange, error) {
-	change, err := m.ReadHTTPJSON(ctx, hostname)
+func (m *Master) ReadHTTPRoute(ctx context.Context, hostname string) (*ingressbuilder.HTTPRouteBuilder, error) {
+	bin, err := m.readObject(ctx, replication.EventType_EVENT_TYPE_HTTP, hostname)
 	if err != nil {
-		return acme.HTTPChange{}, err
+		return nil, err
 	}
-	return toACMEHTTPChange(change), nil
+	zone, err := ingress.ReadHTTPZone(bytes.NewReader(bin))
+	if err != nil {
+		return nil, err
+	}
+	route := ingressbuilder.NewHTTPRoute()
+	if err := route.From(zone); err != nil {
+		return nil, err
+	}
+	return route, nil
 }
 
-func (m *Master) PublishHTTPChange(ctx context.Context, hostname string, change acme.HTTPChange) error {
-	payload, err := marshalACMEHTTPChange(change)
+func (m *Master) PublishHTTPRoute(ctx context.Context, hostname string, route *ingressbuilder.HTTPRouteBuilder) error {
+	bin, err := renderHTTPRoute(route)
 	if err != nil {
 		return err
 	}
-	_, err = m.PublishHTTPJSON(ctx, hostname, payload)
+	_, err = m.PublishHTTP(ctx, hostname, bin)
 	return err
 }
 
-func (m *Master) ReadTLS(ctx context.Context, hostname string) (acme.TLSChange, error) {
-	change, err := m.ReadTLSJSON(ctx, hostname)
+func (m *Master) PublishHTTPRouteWithACME(ctx context.Context, hostname string, route *ingressbuilder.HTTPRouteBuilder) (*replication.PushChangeResponse, error) {
+	bin, err := renderHTTPRoute(route)
 	if err != nil {
-		return acme.TLSChange{}, err
+		return nil, err
 	}
-	return acme.TLSChange{
-		Name:            change.Name,
-		SNI:             change.SNI,
-		Kind:            change.Kind,
-		CertPEM:         change.CertPEM,
-		KeyPEM:          change.KeyPEM,
-		BackendHostname: change.BackendHostname,
-		BackendPort:     change.BackendPort,
-	}, nil
+	resp, err := m.PublishHTTP(ctx, hostname, bin)
+	if err != nil {
+		return nil, err
+	}
+
+	routeCopy := ingressbuilder.NewHTTPRoute().Use(route)
+	cfg := acme.Config{
+		DefaultProvider: m.acme.DefaultProvider,
+		DefaultEmail:    m.acme.DefaultEmail,
+		ZeroSSLEABKID:   m.acme.ZeroSSLEABKID,
+		ZeroSSLEABHMAC:  m.acme.ZeroSSLEABHMAC,
+	}
+	go func() {
+		if err := acme.HandleHTTPPublish(context.Background(), m, cfg, hostname, routeCopy); err != nil {
+			log.Printf("%s %sacme async%s hostname=%s err=%v", masterLogPrefix, masterLogFail, masterLogReset, hostname, err)
+		}
+	}()
+
+	return resp, nil
 }
 
-func (m *Master) PublishTLSChange(ctx context.Context, hostname string, change acme.TLSChange) error {
-	bin, err := renderTLSChange(TLSChangeJSON{
-		Name:            change.Name,
-		SNI:             change.SNI,
-		CertPEM:         change.CertPEM,
-		KeyPEM:          change.KeyPEM,
-		Kind:            change.Kind,
-		BackendHostname: change.BackendHostname,
-		BackendPort:     change.BackendPort,
-	})
+func (m *Master) ReadTLSRoute(ctx context.Context, hostname string) (*ingressbuilder.TLSRouteBuilder, error) {
+	bin, err := m.readObject(ctx, replication.EventType_EVENT_TYPE_TLS, hostname)
+	if err != nil {
+		return nil, err
+	}
+	zone, err := ingress.ReadTLSZone(bytes.NewReader(bin))
+	if err != nil {
+		return nil, err
+	}
+	route := ingressbuilder.NewTLSRoute()
+	if err := route.From(zone); err != nil {
+		return nil, err
+	}
+	return route, nil
+}
+
+func (m *Master) PublishTLSRoute(ctx context.Context, hostname string, route *ingressbuilder.TLSRouteBuilder) error {
+	bin, err := renderTLSRoute(route)
 	if err != nil {
 		return err
 	}
 	_, err = m.PublishTLS(ctx, hostname, bin)
 	return err
+}
+
+func (m *Master) PublishTLSRouteWithResponse(ctx context.Context, hostname string, route *ingressbuilder.TLSRouteBuilder) (*replication.PushChangeResponse, error) {
+	bin, err := renderTLSRoute(route)
+	if err != nil {
+		return nil, err
+	}
+	return m.PublishTLS(ctx, hostname, bin)
 }

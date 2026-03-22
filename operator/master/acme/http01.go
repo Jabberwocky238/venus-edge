@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	ingressbuilder "aaa/ingress/builder"
 )
 
 type HTTP01Solver struct {
@@ -19,28 +21,26 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 	}
 	logACMEStart("http-01 present [%s] token=%s", hostname, token)
 	return run(ctx, func(ctx context.Context) error {
-		change, err := readHTTPChangeOrEmpty(ctx, s.controller, hostname)
+		route, err := readHTTPRouteOrEmpty(ctx, s.controller, hostname)
 		if err != nil {
 			logACMEError(err, "http-01 present [%s] token=%s", hostname, token)
 			return err
 		}
-		challengePolicy := HTTPPolicy{
-			PathnameKind:   "exact",
-			Pathname:       challengePath(token),
-			FixContent:     fixContent,
-			AllowRawAccess: true,
-		}
-		next := make([]HTTPPolicy, 0, len(change.Policies)+1)
+		challengePolicy := ingressbuilder.NewHTTPPolicy().
+			WithExactPath(challengePath(token)).
+			WithFixContent(fixContent).
+			WithAllowRawAccess(true)
+		next := make([]*ingressbuilder.HTTPPolicyBuilder, 0, len(route.Policies)+1)
 		next = append(next, challengePolicy)
-		for _, policy := range change.Policies {
+		for _, policy := range route.Policies {
 			if isChallengePolicy(policy, token) {
 				continue
 			}
 			next = append(next, policy)
 		}
-		change.Name = hostname
-		change.Policies = next
-		if err := s.controller.PublishHTTPChange(ctx, hostname, change); err != nil {
+		route.HostName = hostname
+		route.Policies = next
+		if err := s.controller.PublishHTTPRoute(ctx, hostname, route); err != nil {
 			logACMEError(err, "http-01 present [%s] token=%s", hostname, token)
 			return err
 		}
@@ -78,21 +78,21 @@ func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) erro
 			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
-		change, err := readHTTPChangeOrEmpty(ctx, s.controller, state.Hostname)
+		route, err := readHTTPRouteOrEmpty(ctx, s.controller, state.Hostname)
 		if err != nil {
 			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
-		filtered := make([]HTTPPolicy, 0, len(change.Policies))
-		for _, policy := range change.Policies {
+		filtered := make([]*ingressbuilder.HTTPPolicyBuilder, 0, len(route.Policies))
+		for _, policy := range route.Policies {
 			if isChallengePolicy(policy, state.Token) {
 				continue
 			}
 			filtered = append(filtered, policy)
 		}
-		change.Name = state.Hostname
-		change.Policies = filtered
-		if err := s.controller.PublishHTTPChange(ctx, state.Hostname, change); err != nil {
+		route.HostName = state.Hostname
+		route.Policies = filtered
+		if err := s.controller.PublishHTTPRoute(ctx, state.Hostname, route); err != nil {
 			logACMEError(err, "http-01 cleanup [%s] token=%s", hostname, token)
 			return err
 		}
@@ -106,9 +106,6 @@ func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) erro
 }
 
 func (s *HTTP01Solver) root() string {
-	if s.controller == nil || s.controller.Root() == "" {
-		return "."
-	}
 	return s.controller.Root()
 }
 
@@ -120,21 +117,22 @@ func challengePath(token string) string {
 	return "/.well-known/acme-challenge/" + token
 }
 
-func isChallengePolicy(policy HTTPPolicy, token string) bool {
-	return policy.PathnameKind == "exact" &&
+func isChallengePolicy(policy *ingressbuilder.HTTPPolicyBuilder, token string) bool {
+	return policy != nil &&
+		policy.PathnameKind.String() == "exact" &&
 		policy.Pathname == challengePath(token) &&
 		policy.FixContent != ""
 }
 
-func readHTTPChangeOrEmpty(ctx context.Context, c Controller, hostname string) (HTTPChange, error) {
-	change, err := c.ReadHTTP(ctx, hostname)
+func readHTTPRouteOrEmpty(ctx context.Context, c Controller, hostname string) (*ingressbuilder.HTTPRouteBuilder, error) {
+	route, err := c.ReadHTTPRoute(ctx, hostname)
 	if err != nil {
 		if isNotExist(err) {
-			return HTTPChange{Name: hostname}, nil
+			return ingressbuilder.NewHTTPRoute().WithHostName(hostname), nil
 		}
-		return HTTPChange{}, err
+		return nil, err
 	}
-	return change, nil
+	return route, nil
 }
 
 func unixNow() int64 {
