@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: venus-edge-agent-config
+  namespace: venus-edge
+data:
+  VENUS_AGENT_ROOT: "/var/lib/luna"
+  VENUS_TLS_LISTEN: ":443"
+  VENUS_HTTP_LISTEN: ":80"
+  VENUS_DNS_LISTEN: ":53"
+  VENUS_HEALTH_LISTEN: ":50050"
+  VENUS_MASTER_ADDRESS: "venus-master.venus-edge.svc.cluster.local:10992"
+  VENUS_DNS_GEOIP_MMDB_PATH: "/var/lib/luna/geoip/GeoLite2-City.mmdb"
+  VENUS_DNS_FORWARD_SERVERS: "1.1.1.1:53,8.8.8.8:53"
+  GEOIP_CITY_MMDB_URL: "http://cdnus.enzyme.jw238.site/GeoLite2-City.mmdb"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: venus-edge
+  namespace: venus-edge
+spec:
+  type: ClusterIP
+  selector:
+    app: venus-agent
+    venus-edge.io/cluster: cluster-a
+  ports:
+    - name: dns-udp
+      port: 53
+      targetPort: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      targetPort: 53
+      protocol: TCP
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: venus-agent
+  namespace: venus-edge
+spec:
+  selector:
+    matchLabels:
+      app: venus-agent
+      venus-edge.io/cluster: cluster-a
+  template:
+    metadata:
+      labels:
+        app: venus-agent
+        venus-edge.io/cluster: cluster-a
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: venus-edge-agent
+      initContainers:
+        - name: prepare-geoip-mmdb
+          image: curlimages/curl:8.12.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /var/lib/luna/geoip
+              if [ -s /var/lib/luna/geoip/GeoLite2-City.mmdb ]; then
+                exit 0
+              fi
+              curl -fsSL "${GEOIP_CITY_MMDB_URL}" -o /var/lib/luna/geoip/GeoLite2-City.mmdb.tmp
+              mv /var/lib/luna/geoip/GeoLite2-City.mmdb.tmp /var/lib/luna/geoip/GeoLite2-City.mmdb
+          env:
+            - name: GEOIP_CITY_MMDB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: venus-edge-agent-config
+                  key: GEOIP_CITY_MMDB_URL
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/luna
+      containers:
+        - name: agent
+          image: ghcr.io/jabberwocky238/venus-edge:latest
+          imagePullPolicy: Always
+          command: ["agent"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - NET_BIND_SERVICE
+          envFrom:
+            - configMapRef:
+                name: venus-edge-agent-config
+          env:
+            - name: VENUS_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: VENUS_AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+            - name: health
+              containerPort: 50050
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+          startupProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 50050
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 50050
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              host: 127.0.0.1
+              port: 50050
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/luna
+      volumes:
+        - name: data
+          emptyDir: {}

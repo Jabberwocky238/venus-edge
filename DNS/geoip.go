@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	mdns "github.com/miekg/dns"
 	geoip2 "github.com/oschwald/geoip2-golang"
 )
 
@@ -17,35 +18,31 @@ type Coordinates struct {
 	Longitude float64
 }
 
-type geoIPLookup interface {
-	lookup(ip net.IP) (*Coordinates, error)
-}
-
-type geoIPDriver interface {
-	geoIPLookup
+type ipLookup interface {
+	LookupIP(ip net.IP) (*Coordinates, error)
 	Close() error
 }
 
-type Reader struct {
+type GeoIPReader struct {
 	db *geoip2.Reader
 }
 
-func NewReader(mmdbPath string) (*Reader, error) {
+func NewReader(mmdbPath string) (*GeoIPReader, error) {
 	db, err := geoip2.Open(mmdbPath)
 	if err != nil {
 		return nil, err
 	}
-	return &Reader{db: db}, nil
+	return &GeoIPReader{db: db}, nil
 }
 
-func (r *Reader) Close() error {
+func (r *GeoIPReader) Close() error {
 	if r.db == nil {
 		return nil
 	}
 	return r.db.Close()
 }
 
-func (r *Reader) lookup(ip net.IP) (*Coordinates, error) {
+func (r *GeoIPReader) LookupIP(ip net.IP) (*Coordinates, error) {
 	city, err := r.db.City(ip)
 	if err != nil {
 		return nil, err
@@ -102,38 +99,55 @@ func Haversine(a, b Coordinates) float64 {
 	return earthRadiusKm * c
 }
 
-func sortValuesByDistance(values []string, client Coordinates, lookup geoIPLookup) []string {
-	if len(values) <= 1 {
-		return values
-	}
-	type ipDist struct {
-		value string
-		dist  float64
-	}
-	entries := make([]ipDist, 0, len(values))
-	for _, value := range values {
-		ip := net.ParseIP(value)
-		if ip == nil {
-			entries = append(entries, ipDist{value: value, dist: math.MaxFloat64})
-			continue
-		}
-		coords, err := lookup.lookup(ip)
-		if err != nil || coords == nil {
-			entries = append(entries, ipDist{value: value, dist: math.MaxFloat64})
-			continue
-		}
-		entries = append(entries, ipDist{value: value, dist: Haversine(client, *coords)})
-	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].dist < entries[j].dist
-	})
-	sorted := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		sorted = append(sorted, entry.value)
-	}
-	return sorted
-}
-
 func degreesToRadians(deg float64) float64 {
 	return deg * math.Pi / 180.0
+}
+
+func rrDistance(driver ipLookup, client Coordinates, rr mdns.RR) float64 {
+	var ip net.IP
+	switch value := rr.(type) {
+	case *mdns.A:
+		ip = value.A
+	case *mdns.AAAA:
+		ip = value.AAAA
+	default:
+		return math.MaxFloat64
+	}
+	if ip == nil {
+		return math.MaxFloat64
+	}
+	coords, err := driver.LookupIP(ip)
+	if err != nil || coords == nil {
+		return math.MaxFloat64
+	}
+	return Haversine(client, *coords)
+}
+
+func sortRRsByClientDistance(driver ipLookup, addr net.Addr, answers []mdns.RR) {
+	if driver == nil || len(answers) <= 1 || addr == nil {
+		return
+	}
+	clientIP := remoteAddrIP(addr)
+	if clientIP == nil {
+		return
+	}
+	clientCoords, err := driver.LookupIP(clientIP)
+	if err != nil || clientCoords == nil {
+		return
+	}
+
+	type rrDist struct {
+		rr   mdns.RR
+		dist float64
+	}
+	items := make([]rrDist, 0, len(answers))
+	for _, rr := range answers {
+		items = append(items, rrDist{rr: rr, dist: rrDistance(driver, *clientCoords, rr)})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].dist < items[j].dist
+	})
+	for i := range items {
+		answers[i] = items[i].rr
+	}
 }

@@ -39,6 +39,14 @@ type Options struct {
 	ManageAddr string
 	GRPCAddr   string
 	WebRoot    string
+	ACME       ACMEConfig
+}
+
+type ACMEConfig struct {
+	DefaultProvider string
+	DefaultEmail    string
+	ZeroSSLEABKID   string
+	ZeroSSLEABHMAC  string
 }
 
 type Master struct {
@@ -48,6 +56,7 @@ type Master struct {
 	manageAddr string
 	grpcAddr   string
 	webRoot    string
+	acme       ACMEConfig
 }
 
 func (m *Master) Root() string {
@@ -96,7 +105,15 @@ func New(opts Options) (*Master, error) {
 		manageAddr: opts.ManageAddr,
 		grpcAddr:   opts.GRPCAddr,
 		webRoot:    opts.WebRoot,
+		acme:       opts.ACME,
 	}, nil
+}
+
+func (m *Master) ACME() ACMEConfig {
+	if m == nil {
+		return ACMEConfig{}
+	}
+	return m.acme
 }
 
 func (m *Master) PublishDNS(ctx context.Context, hostname string, bin []byte) (*replication.PushChangeResponse, error) {

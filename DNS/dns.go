@@ -6,21 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"os"
-	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 	mdns "github.com/miekg/dns"
 )
 
 const (
-	dnsLogPrefix = "\033[38;5;117m[DNS]\033[0m"
-	logColorOK   = "\033[32m"
-	logColorFail = "\033[31m"
+	dnsLogPrefix  = "\033[38;5;117m[DNS]\033[0m"
+	logColorOK    = "\033[32m"
+	logColorFail  = "\033[31m"
 	logColorReset = "\033[0m"
 )
 
@@ -28,15 +27,18 @@ type Engine struct {
 	store     ZoneStore
 	root      string
 	addr      string
-	geoDriver geoIPDriver
+	geoDriver ipLookup
+	forwarder *Forwarder
 	mu        sync.Mutex
 	server    *mdns.Server
 }
 
 type DNSEngineOptions struct {
-	Root     string
-	Addr     string
-	MMDBPath string
+	Root           string
+	Addr           string
+	MMDBPath       string
+	ForwardServers []string
+	ForwardTimeout time.Duration
 }
 
 type readerHandler struct {
@@ -45,17 +47,39 @@ type readerHandler struct {
 	indexes map[uint16][]uint32
 }
 
-type lookup interface {
+type zoneLookup interface {
 	Lookup(name string, qtype uint16) ([]mdns.RR, error)
+}
+
+type queryLookup interface {
+	Lookup(ctx context.Context, req *mdns.Msg) (*mdns.Msg, error)
+}
+
+type zoneLookupFunc func(string, uint16) ([]mdns.RR, error)
+
+func (fn zoneLookupFunc) Lookup(name string, qtype uint16) ([]mdns.RR, error) {
+	return fn(name, qtype)
 }
 
 type storeHandler struct {
 	store     ZoneStore
-	geoDriver geoIPDriver
+	geoDriver ipLookup
+	forwarder queryLookup
 }
 
 func NewDNSEngine(opts DNSEngineOptions) *Engine {
-	engine := &Engine{root: opts.Root, addr: opts.Addr}
+	forwardCfg := DefaultForwarderConfig()
+	if len(opts.ForwardServers) > 0 {
+		forwardCfg.Servers = opts.ForwardServers
+	}
+	if opts.ForwardTimeout > 0 {
+		forwardCfg.Timeout = opts.ForwardTimeout
+	}
+	engine := &Engine{
+		root:      opts.Root,
+		addr:      opts.Addr,
+		forwarder: NewForwarder(forwardCfg),
+	}
 	engine.initGeoIP(opts.MMDBPath)
 	return engine
 }
@@ -85,7 +109,7 @@ func (e *Engine) Listen(ctx context.Context) error {
 	server := &mdns.Server{
 		Addr:    e.addr,
 		Net:     "udp",
-		Handler: &storeHandler{store: store, geoDriver: e.geoDriver},
+		Handler: &storeHandler{store: store, geoDriver: e.geoDriver, forwarder: e.forwarder},
 	}
 
 	e.mu.Lock()
@@ -115,6 +139,15 @@ func (e *Engine) Listen(ctx context.Context) error {
 	return err
 }
 
+func (e *Engine) Addr() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.server == nil {
+		return ""
+	}
+	return e.server.Addr
+}
+
 func (e *Engine) Stop() error {
 	e.mu.Lock()
 	server := e.server
@@ -138,7 +171,7 @@ func (e *Engine) Stop() error {
 	return err
 }
 
-func newReaderLookup(r io.Reader) (lookup, error) {
+func newReaderLookup(r io.Reader) (zoneLookup, error) {
 	zone, err := Read(r)
 	if err != nil {
 		return nil, err
@@ -164,7 +197,7 @@ func newReaderLookup(r io.Reader) (lookup, error) {
 
 func (h *storeHandler) ServeDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	logDNSRequest(w.RemoteAddr(), req)
-	respond(w, req, func(name string, qtype uint16) ([]mdns.RR, error) {
+	respond(w, req, zoneLookupFunc(func(name string, qtype uint16) ([]mdns.RR, error) {
 		readerHandler, err := h.lookupForQuestion(name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -173,16 +206,16 @@ func (h *storeHandler) ServeDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 			return nil, err
 		}
 		return readerHandler.Lookup(name, qtype)
-	}, h.geoDriver)
+	}), h.forwarder, h.geoDriver)
 }
 
-func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) ([]mdns.RR, error), geo geoIPDriver) {
+func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup zoneLookup, forwarder queryLookup, geo ipLookup) {
 	resp := new(mdns.Msg)
 	resp.SetReply(req)
 	resp.Authoritative = true
 
 	for _, q := range req.Question {
-		answers, err := lookup(q.Name, q.Qtype)
+		answers, err := lookup.Lookup(q.Name, q.Qtype)
 		if err != nil {
 			resp.Rcode = mdns.RcodeServerFailure
 			logDNSResponse(w.RemoteAddr(), req, resp, err)
@@ -193,6 +226,16 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (
 		resp.Answer = append(resp.Answer, answers...)
 	}
 
+	if len(resp.Answer) == 0 && len(req.Question) > 0 && forwarder != nil {
+		forwarded, err := forwarder.Lookup(context.Background(), req)
+		if err == nil && forwarded != nil {
+			sortRRsByClientDistance(geo, w.RemoteAddr(), forwarded.Answer)
+			logDNSResponse(w.RemoteAddr(), req, forwarded, nil)
+			_ = w.WriteMsg(forwarded)
+			return
+		}
+	}
+
 	if len(resp.Answer) == 0 && len(req.Question) > 0 {
 		resp.Rcode = mdns.RcodeNameError
 	}
@@ -201,112 +244,7 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (
 	_ = w.WriteMsg(resp)
 }
 
-func logDNSRequest(addr net.Addr, req *mdns.Msg) {
-	question := "-"
-	if req != nil && len(req.Question) > 0 {
-		q := req.Question[0]
-		question = fmt.Sprintf("%s %s", q.Name, mdns.TypeToString[q.Qtype])
-	}
-	fmt.Fprintf(os.Stderr, "%s query from=%s question=%s\n", dnsLogPrefix, formatRemoteAddr(addr), question)
-}
-
-func logDNSResponse(addr net.Addr, req, resp *mdns.Msg, err error) {
-	question := "-"
-	if req != nil && len(req.Question) > 0 {
-		q := req.Question[0]
-		question = fmt.Sprintf("%s %s", q.Name, mdns.TypeToString[q.Qtype])
-	}
-	if err != nil || (resp != nil && resp.Rcode != mdns.RcodeSuccess) {
-		rcode := mdns.RcodeSuccess
-		if resp != nil {
-			rcode = resp.Rcode
-		}
-		fmt.Fprintf(
-			os.Stderr,
-			"%s %sfail%s to=%s question=%s rcode=%s err=%v\n",
-			dnsLogPrefix,
-			logColorFail,
-			logColorReset,
-			formatRemoteAddr(addr),
-			question,
-			mdns.RcodeToString[rcode],
-			err,
-		)
-		return
-	}
-	answerCount := 0
-	if resp != nil {
-		answerCount = len(resp.Answer)
-	}
-	fmt.Fprintf(
-		os.Stderr,
-		"%s %ssuccess%s to=%s question=%s answers=%d\n",
-		dnsLogPrefix,
-		logColorOK,
-		logColorReset,
-		formatRemoteAddr(addr),
-		question,
-		answerCount,
-	)
-}
-
-func formatRemoteAddr(addr net.Addr) string {
-	if addr == nil {
-		return "-"
-	}
-	return addr.String()
-}
-
-func sortRRsByClientDistance(driver geoIPDriver, addr net.Addr, answers []mdns.RR) {
-	if driver == nil || len(answers) <= 1 || addr == nil {
-		return
-	}
-	clientIP := remoteAddrIP(addr)
-	if clientIP == nil {
-		return
-	}
-	clientCoords, err := driver.lookup(clientIP)
-	if err != nil || clientCoords == nil {
-		return
-	}
-
-	type rrDist struct {
-		rr   mdns.RR
-		dist float64
-	}
-	items := make([]rrDist, 0, len(answers))
-	for _, rr := range answers {
-		items = append(items, rrDist{rr: rr, dist: rrDistance(driver, *clientCoords, rr)})
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].dist < items[j].dist
-	})
-	for i := range items {
-		answers[i] = items[i].rr
-	}
-}
-
-func rrDistance(driver geoIPDriver, client Coordinates, rr mdns.RR) float64 {
-	var ip net.IP
-	switch value := rr.(type) {
-	case *mdns.A:
-		ip = value.A
-	case *mdns.AAAA:
-		ip = value.AAAA
-	default:
-		return math.MaxFloat64
-	}
-	if ip == nil {
-		return math.MaxFloat64
-	}
-	coords, err := driver.lookup(ip)
-	if err != nil || coords == nil {
-		return math.MaxFloat64
-	}
-	return Haversine(client, *coords)
-}
-
-func (h *storeHandler) lookupForQuestion(name string) (lookup, error) {
+func (h *storeHandler) lookupForQuestion(name string) (zoneLookup, error) {
 	for _, zone := range CandidateZones(name) {
 		f, err := h.store.OpenZone(zone)
 		if err != nil {

@@ -15,9 +15,7 @@ import (
 
 const (
 	LetsEncryptProductionURL = xacme.LetsEncryptURL
-	LetsEncryptStagingURL    = "https://acme-staging-v02.api.letsencrypt.org/directory"
 	ZeroSSLProductionURL     = "https://acme.zerossl.com/v2/DV90"
-	ZeroSSLStagingURL        = "https://acme.zerossl.com/v2/DV90/test"
 )
 
 type Provider string
@@ -33,14 +31,13 @@ type ExternalAccount struct {
 }
 
 type IssuerConfig struct {
-	Provider      Provider
-	DirectoryURL  string
-	Email         string
-	Staging       bool
-	AccountKey    crypto.Signer
-	UserAgent     string
-	HTTPClient    *http.Client
-	Prompt        func(string) bool
+	Provider        Provider
+	DirectoryURL    string
+	Email           string
+	AccountKey      crypto.Signer
+	UserAgent       string
+	HTTPClient      *http.Client
+	Prompt          func(string) bool
 	ExternalAccount *ExternalAccount
 }
 
@@ -50,16 +47,16 @@ type Issuer struct {
 }
 
 func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
-	logACMEStart("issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
+	logACMEStart("issuer init provider=%s", cfg.Provider)
 	if strings.TrimSpace(cfg.Email) == "" {
 		err := fmt.Errorf("email is required")
-		logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
+		logACMEError(err, "issuer init provider=%s", cfg.Provider)
 		return nil, err
 	}
 
 	dirURL, err := resolveDirectoryURL(cfg)
 	if err != nil {
-		logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
+		logACMEError(err, "issuer init provider=%s", cfg.Provider)
 		return nil, err
 	}
 	cfg.DirectoryURL = dirURL
@@ -67,7 +64,7 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 	if cfg.AccountKey == nil {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
-			logACMEError(err, "issuer init provider=%s staging=%t", cfg.Provider, cfg.Staging)
+			logACMEError(err, "issuer init provider=%s", cfg.Provider)
 			return nil, fmt.Errorf("generate account key: %w", err)
 		}
 		cfg.AccountKey = key
@@ -143,16 +140,10 @@ func resolveDirectoryURL(cfg IssuerConfig) (string, error) {
 
 	switch cfg.Provider {
 	case ProviderLetsEncrypt, "":
-		if cfg.Staging {
-			return LetsEncryptStagingURL, nil
-		}
 		return LetsEncryptProductionURL, nil
 	case ProviderZeroSSL:
 		if cfg.ExternalAccount == nil || strings.TrimSpace(cfg.ExternalAccount.KID) == "" || len(cfg.ExternalAccount.Key) == 0 {
 			return "", fmt.Errorf("zerossl requires external account binding")
-		}
-		if cfg.Staging {
-			return ZeroSSLStagingURL, nil
 		}
 		return ZeroSSLProductionURL, nil
 	default:

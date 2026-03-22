@@ -31,7 +31,7 @@ type geoDriverStub struct {
 	coords map[string]*Coordinates
 }
 
-func (s *geoDriverStub) lookup(ip net.IP) (*Coordinates, error) {
+func (s *geoDriverStub) LookupIP(ip net.IP) (*Coordinates, error) {
 	if ip == nil {
 		return nil, nil
 	}
@@ -135,7 +135,7 @@ func TestNewReaderLookupAndServeDNS(t *testing.T) {
 	req := mustNewQuestion("example.com.", mdns.TypeA)
 
 	writer := &fakeResponseWriter{}
-	respond(writer, req, lookup.Lookup, nil)
+	respond(writer, req, lookup, nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -167,7 +167,7 @@ func TestServeDNSReturnsTXT(t *testing.T) {
 	req := mustNewQuestion("example.com.", mdns.TypeTXT)
 
 	writer := &fakeResponseWriter{}
-	respond(writer, req, lookup.Lookup, nil)
+	respond(writer, req, lookup, nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -197,7 +197,7 @@ func TestServeDNSMatchesWildcard(t *testing.T) {
 	}
 
 	writer := &fakeResponseWriter{}
-	respond(writer, mustNewQuestion("foo.example.com.", mdns.TypeA), lookup.Lookup, nil)
+	respond(writer, mustNewQuestion("foo.example.com.", mdns.TypeA), lookup, nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -454,9 +454,9 @@ func TestNewDNSEngineLoadsRealMMDB(t *testing.T) {
 	if engine.geoDriver == nil {
 		t.Fatal("expected geo driver to be loaded")
 	}
-	coords, err := engine.geoDriver.lookup(net.ParseIP("8.8.8.8"))
+	coords, err := engine.geoDriver.LookupIP(net.ParseIP("8.8.8.8"))
 	if err != nil {
-		t.Fatalf("lookup() error = %v", err)
+		t.Fatalf("LookupIP() error = %v", err)
 	}
 	if coords == nil {
 		t.Fatal("expected coordinates for real mmdb lookup")

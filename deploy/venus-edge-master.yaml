@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: venus-edge-master-config
+  namespace: venus-edge
+data:
+  VENUS_MASTER_ROOT: "/var/lib/luna"
+  VENUS_MANAGE_LISTEN: ":9000"
+  VENUS_REPLICATION_LISTEN: ":10992"
+  VENUS_ACME_DEFAULT_PROVIDER: "zerossl"
+  VENUS_ACME_DEFAULT_EMAIL: "shadowsocks1984@gmail.com"
+  VENUS_ACME_EAB_KID: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: venus-edge-master-secrets
+  namespace: venus-edge
+type: Opaque
+stringData:
+  VENUS_ACME_EAB_HMAC_KEY: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: luna-master
+  namespace: venus-edge
+spec:
+  selector:
+    app: luna-master
+  ports:
+    - name: manage
+      port: 9000
+      targetPort: 9000
+    - name: replication
+      port: 10992
+      targetPort: 10992
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: luna-master
+  namespace: venus-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: luna-master
+  template:
+    metadata:
+      labels:
+        app: luna-master
+    spec:
+      serviceAccountName: venus-edge-master
+      containers:
+        - name: master
+          image: ghcr.io/jabberwocky238/venus-edge:latest
+          imagePullPolicy: Always
+          command: ["master"]
+          envFrom:
+            - configMapRef:
+                name: venus-edge-master-config
+            - secretRef:
+                name: venus-edge-master-secrets
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: manage
+              containerPort: 9000
+            - name: replication
+              containerPort: 10992
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/luna
+      volumes:
+        - name: data
+          emptyDir: {}
