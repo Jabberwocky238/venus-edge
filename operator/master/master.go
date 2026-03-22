@@ -49,6 +49,13 @@ type Master struct {
 	webRoot    string
 }
 
+func (m *Master) Root() string {
+	if m == nil || m.root == "" {
+		return defaultMasterRoot
+	}
+	return m.root
+}
+
 func New(opts Options) (*Master, error) {
 	if opts.Store == nil {
 		return nil, fmt.Errorf("store is required")

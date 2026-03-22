@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/miekg/dns v1.1.68
 	github.com/oschwald/geoip2-golang v1.13.0
+	golang.org/x/crypto v0.46.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11

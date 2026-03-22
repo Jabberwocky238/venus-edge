@@ -11,11 +11,13 @@ type HTTPRouteBuilder struct {
 }
 
 type HTTPPolicyBuilder struct {
-	Backend      string
-	PathnameKind ingress.Pathname_Kind
-	Pathname     string
-	QueryItems   []HTTPKV
-	HeaderItems  []HTTPKV
+	Backend        string
+	PathnameKind   ingress.Pathname_Kind
+	Pathname       string
+	QueryItems     []HTTPKV
+	HeaderItems    []HTTPKV
+	FixContent     string
+	AllowRawAccess bool
 }
 
 type HTTPKV struct {
@@ -68,6 +70,16 @@ func (b *HTTPPolicyBuilder) WithBackend(backend string) *HTTPPolicyBuilder {
 	return b
 }
 
+func (b *HTTPPolicyBuilder) WithFixContent(fixContent string) *HTTPPolicyBuilder {
+	b.FixContent = fixContent
+	return b
+}
+
+func (b *HTTPPolicyBuilder) WithAllowRawAccess(allow bool) *HTTPPolicyBuilder {
+	b.AllowRawAccess = allow
+	return b
+}
+
 func (b *HTTPPolicyBuilder) WithExactPath(path string) *HTTPPolicyBuilder {
 	b.PathnameKind = ingress.Pathname_Kind_exact
 	b.Pathname = path
@@ -107,12 +119,18 @@ func (b *HTTPPolicyBuilder) WithHeader(key, value string) *HTTPPolicyBuilder {
 }
 
 func (b *HTTPPolicyBuilder) Build(policy ingress.HttpPolicy) error {
-	if err := requireText("backend", b.Backend); err != nil {
-		return err
-	}
 	if err := policy.SetBackend(b.Backend); err != nil {
 		return err
 	}
+	if b.Backend == "" && b.FixContent == "" {
+		return fmt.Errorf("one of backend or fixContent is required")
+	}
+	if b.FixContent != "" {
+		if err := policy.SetFixContent(b.FixContent); err != nil {
+			return err
+		}
+	}
+	policy.SetAllowRawAccess(b.AllowRawAccess)
 
 	switch {
 	case b.Pathname != "":

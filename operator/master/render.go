@@ -54,11 +54,13 @@ type HTTPChangeJSON struct {
 }
 
 type HTTPPolicyJSON struct {
-	Backend      string       `json:"backend"`
-	PathnameKind string       `json:"pathname_kind,omitempty"`
-	Pathname     string       `json:"pathname,omitempty"`
-	QueryItems   []HTTPKVJSON `json:"query_items,omitempty"`
-	HeaderItems  []HTTPKVJSON `json:"header_items,omitempty"`
+	Backend        string       `json:"backend"`
+	PathnameKind   string       `json:"pathname_kind,omitempty"`
+	Pathname       string       `json:"pathname,omitempty"`
+	QueryItems     []HTTPKVJSON `json:"query_items,omitempty"`
+	HeaderItems    []HTTPKVJSON `json:"header_items,omitempty"`
+	FixContent     string       `json:"fix_content,omitempty"`
+	AllowRawAccess bool         `json:"allow_raw_access,omitempty"`
 }
 
 type HTTPKVJSON struct {
@@ -99,7 +101,14 @@ func (m *Master) PublishHTTPJSON(ctx context.Context, hostname string, payload [
 	if err != nil {
 		return nil, err
 	}
-	return m.PublishHTTP(ctx, hostname, bin)
+	resp, err := m.PublishHTTP(ctx, hostname, bin)
+	if err != nil {
+		return nil, err
+	}
+	if err := runHTTPPublishHooks(ctx, m, hostname, change); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func renderDNSChange(change DNSChangeJSON) ([]byte, error) {
@@ -264,7 +273,10 @@ func buildHTTPRoute(change HTTPChangeJSON) (ingress.HTTPRoute, error) {
 }
 
 func buildHTTPPolicy(policy HTTPPolicyJSON) (*ingressbuilder.HTTPPolicyBuilder, error) {
-	builder := ingressbuilder.NewHTTPPolicy().WithBackend(policy.Backend)
+	builder := ingressbuilder.NewHTTPPolicy().
+		WithBackend(policy.Backend).
+		WithFixContent(policy.FixContent).
+		WithAllowRawAccess(policy.AllowRawAccess)
 
 	switch {
 	case policy.Pathname != "":

@@ -264,6 +264,11 @@ func decodeHTTPPolicy(policy ingress.HttpPolicy) (HTTPPolicyJSON, error) {
 		return HTTPPolicyJSON{}, err
 	}
 	out := HTTPPolicyJSON{Backend: backend}
+	out.AllowRawAccess = policy.AllowRawAccess()
+	out.FixContent, err = policy.FixContent()
+	if err != nil {
+		return HTTPPolicyJSON{}, err
+	}
 
 	switch policy.Which() {
 	case ingress.HttpPolicy_Which_pathname:

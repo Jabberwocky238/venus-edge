@@ -22,8 +22,10 @@ const (
 )
 
 type matchedHTTPBackend struct {
-	backend     string
-	prunePrefix string
+	backend        string
+	prunePrefix    string
+	fixContent     string
+	allowRawAccess bool
 }
 
 type HTTPEngineOptions struct {
@@ -72,6 +74,18 @@ func (e *HTTPEngine) Handler() http.Handler {
 			return
 		}
 
+		// 禁止非 TLS 访问，除非 explicitly 允许了 allowRawAccess
+		if !match.allowRawAccess && r.TLS == nil {
+			http.NotFound(recorder, r)
+			return
+		}
+		if match.fixContent != "" {
+			recorder.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			recorder.WriteHeader(http.StatusOK)
+			_, _ = recorder.Write([]byte(match.fixContent))
+			return
+		}
+
 		target, err := url.Parse(match.backend)
 		if err != nil {
 			http.Error(recorder, fmt.Sprintf("invalid backend %q: %v", match.backend, err), http.StatusBadGateway)
@@ -90,7 +104,12 @@ func (e *HTTPEngine) Handler() http.Handler {
 			req.SetURL(target)
 			req.Out.URL.Path = joinBackendPath(target.Path, rewrittenPath)
 			req.Out.URL.RawPath = joinBackendPath(target.RawPath, rewrittenRawPath)
-			forwardedHost := forwardedHostName(req.In)
+			var forwardedHost string
+			if r.TLS != nil {
+				forwardedHost = r.TLS.ServerName
+			} else {
+				forwardedHost = r.Host
+			}
 			req.Out.Host = forwardedHost
 			req.Out.Header.Set("Host", forwardedHost)
 			req.Out.Header.Set("X-Forwarded-Host", forwardedHost)
@@ -168,7 +187,16 @@ func (e *HTTPEngine) lookupBackend(r *http.Request) (matchedHTTPBackend, error) 
 		if err != nil {
 			return matchedHTTPBackend{}, fmt.Errorf("read backend: %w", err)
 		}
-		return matchedHTTPBackend{backend: backend, prunePrefix: prunePrefix}, nil
+		fixContent, err := policy.FixContent()
+		if err != nil {
+			return matchedHTTPBackend{}, fmt.Errorf("read fixContent: %w", err)
+		}
+		return matchedHTTPBackend{
+			backend:        backend,
+			prunePrefix:    prunePrefix,
+			fixContent:     fixContent,
+			allowRawAccess: policy.AllowRawAccess(),
+		}, nil
 	}
 
 	return matchedHTTPBackend{}, os.ErrNotExist

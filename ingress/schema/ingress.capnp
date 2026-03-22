@@ -22,6 +22,9 @@ struct HttpPolicy {
     query @2 :Query;
     header @3 :Header;
   }
+
+  fixContent @4 :Text;
+  allowRawAccess @5 :Bool;
 }
 
 struct Pathname {

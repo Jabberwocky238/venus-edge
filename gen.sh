@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-schema="${script_dir}/dns.capnp"
+schema="${script_dir}/ingress/schema/ingress.capnp"
 output_dir="${script_dir}"
 
 gopath="$(go env GOPATH)"

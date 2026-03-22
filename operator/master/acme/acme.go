@@ -2,59 +2,58 @@ package acme
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
-	dns "aaa/DNS"
-	dnsbuilder "aaa/DNS/builder"
-	ingress "aaa/ingress"
-	ingressbuilder "aaa/ingress/builder"
 	master "aaa/operator/master"
+)
+
+const (
+	acmeLogPrefix = "\033[38;5;45m[ACME]\033[0m"
+	acmeStateDir  = "operator/master/acme"
 )
 
 type Manager struct {
 	master *master.Master
 }
 
+type challengeType string
+
+const (
+	challengeTypeHTTP01 challengeType = "http-01"
+)
+
+type challengeState struct {
+	Type       challengeType `json:"type"`
+	Hostname   string        `json:"hostname"`
+	Token      string        `json:"token"`
+	FixContent string        `json:"fix_content"`
+	CreatedAt  int64         `json:"created_at"`
+}
+
+type certificateRequest struct {
+	Hostname  string `json:"hostname"`
+	Status    string `json:"status"`
+	Provider  string `json:"provider"`
+	Challenge string `json:"challenge"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+func init() {
+	master.RegisterHTTPPublishHook(onHTTPPoliciesPublished)
+}
+
 func New(m *master.Master) *Manager {
 	return &Manager{master: m}
 }
 
-func (m *Manager) DNS01() *DNS01Solver {
-	return &DNS01Solver{master: m.master}
-}
-
 func (m *Manager) HTTP01() *HTTP01Solver {
 	return &HTTP01Solver{master: m.master}
-}
-
-func renderDNSBin(route dns.RecordBuilder) ([]byte, error) {
-	dir, err := os.MkdirTemp("", "acme-dns-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-
-	path := filepath.Join(dir, "zone.bin")
-	if err := dns.Write(path, route); err != nil {
-		return nil, err
-	}
-	return os.ReadFile(path)
-}
-
-func renderHTTPBin(route ingress.HTTPRoute) ([]byte, error) {
-	dir, err := os.MkdirTemp("", "acme-http-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-
-	path := filepath.Join(dir, "zone.bin")
-	if err := ingress.WriteHTTPZone(path, route); err != nil {
-		return nil, err
-	}
-	return os.ReadFile(path)
 }
 
 func ensureMaster(m *master.Master) error {
@@ -64,23 +63,93 @@ func ensureMaster(m *master.Master) error {
 	return nil
 }
 
-func newTXTRecord(name, value string) dns.RecordBuilder {
-	return dnsbuilder.NewTXT().WithName(name).WithValues(value)
-}
-
-func newHTTPRoute(hostname, token, backend string) ingress.HTTPRoute {
-	return ingressbuilder.NewHTTPRoute().
-		WithName(hostname).
-		AddPolicy(
-			ingressbuilder.NewHTTPPolicy().
-				WithBackend(backend).
-				WithExactPath("/.well-known/acme-challenge/" + token),
-		)
-}
-
 func run(ctx context.Context, fn func(context.Context) error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return fn(ctx)
+}
+
+func isNotExist(err error) bool {
+	return err != nil && os.IsNotExist(err)
+}
+
+func onHTTPPoliciesPublished(ctx context.Context, m *master.Master, hostname string, change master.HTTPChangeJSON) error {
+	if m == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
+		return nil
+	}
+	tlsChange, err := m.ReadTLSJSON(ctx, hostname)
+	if err == nil && strings.TrimSpace(tlsChange.CertPEM) != "" && strings.TrimSpace(tlsChange.KeyPEM) != "" {
+		return nil
+	}
+	if err != nil && !isNotExist(err) {
+		return err
+	}
+
+	req := certificateRequest{
+		Hostname:  hostname,
+		Status:    "pending",
+		Provider:  string(ProviderLetsEncrypt),
+		Challenge: string(challengeTypeHTTP01),
+		CreatedAt: time.Now().Unix(),
+	}
+	if err := saveJSONFile(filepath.Join(m.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json"), req); err != nil {
+		return err
+	}
+	log.Printf("%s auto request hostname=%s challenge=http-01 provider=%s", acmeLogPrefix, hostname, req.Provider)
+	return nil
+}
+
+func isACMEChallengeChange(change master.HTTPChangeJSON) bool {
+	for _, policy := range change.Policies {
+		if strings.HasPrefix(policy.Pathname, "/.well-known/acme-challenge/") && policy.FixContent != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func saveChallengeState(root string, state challengeState, key string) error {
+	return saveJSONFile(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"), state)
+}
+
+func loadChallengeState(root, key string) (challengeState, error) {
+	var state challengeState
+	data, err := os.ReadFile(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"))
+	if err != nil {
+		return challengeState{}, err
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return challengeState{}, err
+	}
+	return state, nil
+}
+
+func deleteChallengeState(root, key string) error {
+	err := os.Remove(filepath.Join(root, acmeStateDir, "http01", sanitizeKey(key)+".json"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func saveJSONFile(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func sanitizeKey(key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "?", "_", "&", "_", "=", "_", "|", "_")
+	key = replacer.Replace(key)
+	if key == "" {
+		return "empty"
+	}
+	return key
 }
