@@ -1,4 +1,5 @@
 import type { DNSRecord } from './api.ts'
+import { createID } from './id.ts'
 
 export type DNSDraftRecord = DNSRecord & { id: string }
 
@@ -6,7 +7,7 @@ export const dnsRecordTypes = ['a', 'aaaa', 'cname', 'mx', 'ns', 'ptr', 'soa', '
 
 export function createDNSDraft(record?: Partial<DNSRecord>): DNSDraftRecord {
   return {
-    id: crypto.randomUUID(),
+    id: createID(),
     type: 'a',
     name: '',
     ttl: 300,

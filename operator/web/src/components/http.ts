@@ -1,10 +1,11 @@
 import type { HTTPPolicy, HTTPPayload } from './api.ts'
+import { createID } from './id.ts'
 
 export type HTTPDraftPolicy = HTTPPolicy & { id: string }
 
 export function createHTTPDraftPolicy(policy?: Partial<HTTPPolicy>): HTTPDraftPolicy {
   return {
-    id: crypto.randomUUID(),
+    id: createID(),
     backend: '',
     pathname_kind: 'exact',
     pathname: '',
