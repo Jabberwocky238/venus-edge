@@ -7,7 +7,7 @@ import (
 )
 
 type TLSRouteBuilder struct {
-	Name            string
+	HostName        string
 	SNI             string
 	CertPEM         string
 	KeyPEM          string
@@ -20,9 +20,67 @@ func NewTLSRoute() *TLSRouteBuilder {
 	return &TLSRouteBuilder{Kind: ingress.TlsPolicy_Kind_https}
 }
 
-func (b *TLSRouteBuilder) WithName(name string) *TLSRouteBuilder {
-	b.Name = name
+func (b *TLSRouteBuilder) WithHostName(hostName string) *TLSRouteBuilder {
+	b.HostName = hostName
 	return b
+}
+
+func (b *TLSRouteBuilder) Use(other *TLSRouteBuilder) *TLSRouteBuilder {
+	if other == nil {
+		return b
+	}
+	b.HostName = other.HostName
+	b.SNI = other.SNI
+	b.CertPEM = other.CertPEM
+	b.KeyPEM = other.KeyPEM
+	b.Kind = other.Kind
+	b.BackendHostname = other.BackendHostname
+	b.BackendPort = other.BackendPort
+	return b
+}
+
+func (b *TLSRouteBuilder) From(zone ingress.TlsZone) error {
+	name, err := zone.Hostname()
+	if err != nil {
+		return err
+	}
+	policy, err := zone.TlsPolicy()
+	if err != nil {
+		return err
+	}
+	sni, err := policy.Sni()
+	if err != nil {
+		return err
+	}
+	certPEM, err := policy.CertPem()
+	if err != nil {
+		return err
+	}
+	keyPEM, err := policy.KeyPem()
+	if err != nil {
+		return err
+	}
+
+	b.HostName = name
+	b.SNI = sni
+	b.CertPEM = certPEM
+	b.KeyPEM = keyPEM
+	b.Kind = policy.Kind()
+	b.BackendHostname = ""
+	b.BackendPort = 0
+
+	if policy.HasBackendRef() {
+		backend, err := policy.BackendRef()
+		if err != nil {
+			return err
+		}
+		b.BackendHostname, err = backend.Hostname()
+		if err != nil {
+			return err
+		}
+		b.BackendPort = backend.Port()
+	}
+	return nil
 }
 
 func (b *TLSRouteBuilder) WithSNI(sni string) *TLSRouteBuilder {
@@ -52,13 +110,13 @@ func (b *TLSRouteBuilder) WithBackend(hostname string, port uint16) *TLSRouteBui
 }
 
 func (b *TLSRouteBuilder) Build(zone ingress.TlsZone) error {
-	if err := requireText("name", b.Name); err != nil {
+	if err := requireText("hostname", b.HostName); err != nil {
 		return err
 	}
 	if err := requireText("sni", b.SNI); err != nil {
 		return err
 	}
-	if err := zone.SetName(b.Name); err != nil {
+	if err := zone.SetHostname(b.HostName); err != nil {
 		return err
 	}
 	policy, err := zone.NewTlsPolicy()

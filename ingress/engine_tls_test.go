@@ -71,7 +71,7 @@ func TestEngineListenPassthroughRealPort(t *testing.T) {
 		t.Fatalf("NewFSStore() error = %v", err)
 	}
 	if err := store.WriteTLS("backend.example.com", builder.NewTLSRoute().
-		WithName("backend.example.com").
+		WithHostName("backend.example.com").
 		WithSNI("backend.example.com").
 		WithBackend("127.0.0.1", backendPort).
 		WithKind(ingress.TlsPolicy_Kind_tlsPassthrough)); err != nil {
@@ -145,13 +145,13 @@ func TestEndToEndFourPortsRouteCorrectly(t *testing.T) {
 	}
 
 	mustWriteTLS(t, store, "passthrough.example.com", builder.NewTLSRoute().
-		WithName("passthrough.example.com").
+		WithHostName("passthrough.example.com").
 		WithSNI("passthrough.example.com").
 		WithBackend("127.0.0.1", passthroughBackend.port).
 		WithKind(ingress.TlsPolicy_Kind_tlsPassthrough))
 
 	mustWriteTLS(t, store, "terminate.example.com", builder.NewTLSRoute().
-		WithName("terminate.example.com").
+		WithHostName("terminate.example.com").
 		WithSNI("terminate.example.com").
 		WithCertPEM(terminateCertPEM).
 		WithKeyPEM(terminateKeyPEM).
@@ -159,20 +159,20 @@ func TestEndToEndFourPortsRouteCorrectly(t *testing.T) {
 		WithKind(ingress.TlsPolicy_Kind_tlsTerminate))
 
 	mustWriteTLS(t, store, "https.example.com", builder.NewTLSRoute().
-		WithName("https.example.com").
+		WithHostName("https.example.com").
 		WithSNI("https.example.com").
 		WithCertPEM(httpsCertPEM).
 		WithKeyPEM(httpsKeyPEM).
 		WithKind(ingress.TlsPolicy_Kind_https))
 
 	mustWriteHTTP(t, store, "https.example.com", builder.NewHTTPRoute().
-		WithName("https.example.com").
+		WithHostName("https.example.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend("http://127.0.0.1:"+itoaPort(httpsBackend.port)).
 			WithPrefixPath("/")))
 
 	mustWriteHTTP(t, store, "http.example.com", builder.NewHTTPRoute().
-		WithName("http.example.com").
+		WithHostName("http.example.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend("http://127.0.0.1:"+itoaPort(httpBackend.port)).
 			WithPrefixPath("/").

@@ -106,7 +106,12 @@ func (m *Master) PublishHTTPJSON(ctx context.Context, hostname string, payload [
 	if err != nil {
 		return nil, err
 	}
-	if err := acme.HandleHTTPPublish(ctx, m, hostname, toACMEHTTPChange(change)); err != nil {
+	if err := acme.HandleHTTPPublish(ctx, m, acme.Config{
+		DefaultProvider: m.acme.DefaultProvider,
+		DefaultEmail:    m.acme.DefaultEmail,
+		ZeroSSLEABKID:   m.acme.ZeroSSLEABKID,
+		ZeroSSLEABHMAC:  m.acme.ZeroSSLEABHMAC,
+	}, hostname, toACMEHTTPChange(change)); err != nil {
 		return nil, err
 	}
 	return resp, nil

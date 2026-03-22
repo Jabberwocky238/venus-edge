@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const (
@@ -60,21 +59,12 @@ type HTTPKV struct {
 	Value string
 }
 
-type HTTPChange struct {
-	Name     string
-	Policies []HTTPPolicy
-}
-
-type TLSChange struct {
-	CertPEM string
-	KeyPEM  string
-}
-
 type Controller interface {
 	Root() string
 	ReadHTTP(context.Context, string) (HTTPChange, error)
 	PublishHTTPChange(context.Context, string, HTTPChange) error
 	ReadTLS(context.Context, string) (TLSChange, error)
+	PublishTLSChange(context.Context, string, TLSChange) error
 }
 
 func New(controller Controller) *Manager {
@@ -101,37 +91,6 @@ func run(ctx context.Context, fn func(context.Context) error) error {
 
 func isNotExist(err error) bool {
 	return err != nil && os.IsNotExist(err)
-}
-
-func HandleHTTPPublish(ctx context.Context, c Controller, hostname string, change HTTPChange) error {
-	logACMEStart("auto-request [%s]", hostname)
-	if c == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
-		logACMEDone("auto-request skipped [%s]", hostname)
-		return nil
-	}
-	tlsChange, err := c.ReadTLS(ctx, hostname)
-	if err == nil && strings.TrimSpace(tlsChange.CertPEM) != "" && strings.TrimSpace(tlsChange.KeyPEM) != "" {
-		logACMEDone("auto-request skipped [%s] reason=certificate-exists", hostname)
-		return nil
-	}
-	if err != nil && !isNotExist(err) {
-		logACMEError(err, "auto-request [%s]", hostname)
-		return err
-	}
-
-	req := certificateRequest{
-		Hostname:  hostname,
-		Status:    "pending",
-		Provider:  string(ProviderLetsEncrypt),
-		Challenge: string(challengeTypeHTTP01),
-		CreatedAt: time.Now().Unix(),
-	}
-	if err := saveJSONFile(filepath.Join(c.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json"), req); err != nil {
-		logACMEError(err, "auto-request [%s]", hostname)
-		return err
-	}
-	logACMEDone("auto-request [%s] challenge=http-01 provider=%s", hostname, req.Provider)
-	return nil
 }
 
 func isACMEChallengeChange(change HTTPChange) bool {

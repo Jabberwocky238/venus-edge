@@ -25,7 +25,7 @@ func run() error {
 		manageAddr        = flag.String("manage-addr", envOrDefault("VENUS_MANAGE_LISTEN", "127.0.0.1:9000"), "master manage api listen address")
 		grpcAddr          = flag.String("grpc-addr", envOrDefault("VENUS_REPLICATION_LISTEN", "127.0.0.1:10992"), "master grpc listen address")
 		webRoot           = flag.String("web-root", envOrDefault("VENUS_WEB_ROOT", "./operator/web/dist"), "optional web dist root")
-		acmeProvider      = flag.String("acme-provider", envOrDefault("VENUS_ACME_DEFAULT_PROVIDER", "letsencrypt"), "default ACME provider")
+		acmeProvider      = flag.String("acme-provider", envOrDefault("VENUS_ACME_DEFAULT_PROVIDER", "zerossl"), "default ACME provider")
 		acmeEmail         = flag.String("acme-email", envOrDefault("VENUS_ACME_DEFAULT_EMAIL", ""), "default ACME account email")
 		zeroSSLEABKID     = flag.String("zerossl-eab-kid", envOrDefault("VENUS_ACME_EAB_KID", ""), "ZeroSSL external account binding KID")
 		zeroSSLEABHMACKey = flag.String("zerossl-eab-hmac-key", envOrDefault("VENUS_ACME_EAB_HMAC_KEY", ""), "ZeroSSL external account binding HMAC key")

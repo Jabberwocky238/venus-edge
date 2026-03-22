@@ -23,7 +23,7 @@ func TestHTTPEngineLookupBackendSingleHostFilters(t *testing.T) {
 	header := newBackend(t, "backend-header")
 
 	err = store.WriteHTTP("example.com", builder.NewHTTPRoute().
-		WithName("example.com").
+		WithHostName("example.com").
 		AddPolicy(builder.NewHTTPPolicy().WithBackend(exact.URL).WithExactPath("/exact").WithAllowRawAccess(true)).
 		AddPolicy(builder.NewHTTPPolicy().WithBackend(prefix.URL).WithPrefixPath("/api").WithAllowRawAccess(true)).
 		AddPolicy(builder.NewHTTPPolicy().WithBackend(regex.URL).WithRegexPath("^/items/[0-9]+$").WithAllowRawAccess(true)).
@@ -80,14 +80,14 @@ func TestHTTPEngineLookupBackendWildcardAndSingleHostPriority(t *testing.T) {
 	single := newBackend(t, "single-backend")
 
 	err = store.WriteHTTP("*.example.com", builder.NewHTTPRoute().
-		WithName("*.example.com").
+		WithHostName("*.example.com").
 		AddPolicy(builder.NewHTTPPolicy().WithBackend(wildcard.URL).WithPrefixPath("/").WithAllowRawAccess(true)))
 	if err != nil {
 		t.Fatalf("WriteHTTP(wildcard) error = %v", err)
 	}
 
 	err = store.WriteHTTP("api.example.com", builder.NewHTTPRoute().
-		WithName("api.example.com").
+		WithHostName("api.example.com").
 		AddPolicy(builder.NewHTTPPolicy().WithBackend(single.URL).WithPrefixPath("/").WithAllowRawAccess(true)))
 	if err != nil {
 		t.Fatalf("WriteHTTP(single) error = %v", err)
@@ -131,7 +131,7 @@ func TestHTTPEnginePrefixPolicyPrunesMatchedPrefix(t *testing.T) {
 	t.Cleanup(backend.Close)
 
 	err = store.WriteHTTP("aa.com", builder.NewHTTPRoute().
-		WithName("aa.com").
+		WithHostName("aa.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend(backend.URL).
 			WithPrefixPath("/ingress").
@@ -181,7 +181,7 @@ func TestHTTPEnginePrefixPolicyPrunesAndAppendsToBackendBasePath(t *testing.T) {
 	t.Cleanup(backend.Close)
 
 	err = store.WriteHTTP("aa.com", builder.NewHTTPRoute().
-		WithName("aa.com").
+		WithHostName("aa.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend(backend.URL+"/base/path").
 			WithPrefixPath("/ingress").

@@ -5,12 +5,12 @@ $Go.package("schema");
 $Go.import("ingress");
 
 struct TlsZone {
-  name @0 :Text;
+  hostname @0 :Text;
   tlsPolicy @1 :TlsPolicy;
 }
 
 struct HttpZone {
-  name @0 :Text;
+  hostname @0 :Text;
   httpPolicies @1 :List(HttpPolicy);
 }
 

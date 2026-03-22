@@ -42,7 +42,7 @@ func TestFSStoreWriteAndReadTLS(t *testing.T) {
 	}
 
 	err = store.WriteTLS("example.com", builder.NewTLSRoute().
-		WithName("example.com").
+		WithHostName("example.com").
 		WithSNI("example.com").
 		WithCertPEM("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----").
 		WithKeyPEM("-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----").
@@ -56,7 +56,7 @@ func TestFSStoreWriteAndReadTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadTLS() error = %v", err)
 	}
-	name, err := zone.Name()
+	name, err := zone.Hostname()
 	if err != nil || name != "example.com" {
 		t.Fatalf("unexpected name: %q err=%v", name, err)
 	}
@@ -80,7 +80,7 @@ func TestFSStoreWriteAndReadTLSPassthroughBackendRef(t *testing.T) {
 	}
 
 	err = store.WriteTLS("tcp.example.com", builder.NewTLSRoute().
-		WithName("tcp.example.com").
+		WithHostName("tcp.example.com").
 		WithSNI("tcp.example.com").
 		WithBackend("127.0.0.1", 9443).
 		WithKind(ingress.TlsPolicy_Kind_tlsPassthrough))
@@ -117,7 +117,7 @@ func TestFSStoreWriteAndReadHTTP(t *testing.T) {
 	}
 
 	err = store.WriteHTTP("example.com", builder.NewHTTPRoute().
-		WithName("example.com").
+		WithHostName("example.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend("http://127.0.0.1:8080").
 			WithPrefixPath("/api")).
@@ -132,7 +132,7 @@ func TestFSStoreWriteAndReadHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHTTP() error = %v", err)
 	}
-	name, err := zone.Name()
+	name, err := zone.Hostname()
 	if err != nil || name != "example.com" {
 		t.Fatalf("unexpected name: %q err=%v", name, err)
 	}
@@ -175,7 +175,7 @@ func TestStoreTLSPolicyFinderMatchesWildcard(t *testing.T) {
 	}
 
 	err = store.WriteTLS("*.example.com", builder.NewTLSRoute().
-		WithName("*.example.com").
+		WithHostName("*.example.com").
 		WithSNI("*.example.com").
 		WithBackend("127.0.0.1", 9443).
 		WithKind(ingress.TlsPolicy_Kind_tlsPassthrough))

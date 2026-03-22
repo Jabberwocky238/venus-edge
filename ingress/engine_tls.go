@@ -128,7 +128,7 @@ func (e *TLSEngine) acceptOne() (net.Conn, error) {
 	if err != nil {
 		logTLSRoute("", "", err)
 		_ = rawConn.Close()
-		return nil, err
+		return nil, ErrConnHandled
 	}
 	logTLSAccept(serverName)
 
@@ -136,7 +136,7 @@ func (e *TLSEngine) acceptOne() (net.Conn, error) {
 	if err != nil {
 		logTLSRoute(serverName, "", err)
 		_ = rawConn.Close()
-		return nil, err
+		return nil, ErrConnHandled
 	}
 
 	switch policy.Kind() {

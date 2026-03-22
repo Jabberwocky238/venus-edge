@@ -6,7 +6,7 @@ import (
 )
 
 type HTTPRouteBuilder struct {
-	Name     string
+	HostName string
 	Policies []*HTTPPolicyBuilder
 }
 
@@ -33,9 +33,55 @@ func NewHTTPPolicy() *HTTPPolicyBuilder {
 	return &HTTPPolicyBuilder{}
 }
 
-func (b *HTTPRouteBuilder) WithName(name string) *HTTPRouteBuilder {
-	b.Name = name
+func (b *HTTPRouteBuilder) WithHostName(hostname string) *HTTPRouteBuilder {
+	b.HostName = hostname
 	return b
+}
+
+func (b *HTTPRouteBuilder) Use(other *HTTPRouteBuilder) *HTTPRouteBuilder {
+	if other == nil {
+		return b
+	}
+	b.HostName = other.HostName
+	if len(other.Policies) == 0 {
+		b.Policies = nil
+		return b
+	}
+	b.Policies = make([]*HTTPPolicyBuilder, 0, len(other.Policies))
+	for _, policy := range other.Policies {
+		if policy == nil {
+			b.Policies = append(b.Policies, nil)
+			continue
+		}
+		b.Policies = append(b.Policies, NewHTTPPolicy().Use(policy))
+	}
+	return b
+}
+
+func (b *HTTPRouteBuilder) From(zone ingress.HttpZone) error {
+	name, err := zone.Hostname()
+	if err != nil {
+		return err
+	}
+	list, err := zone.HttpPolicies()
+	if err != nil {
+		return err
+	}
+
+	b.HostName = name
+	if list.Len() == 0 {
+		b.Policies = nil
+		return nil
+	}
+	b.Policies = make([]*HTTPPolicyBuilder, 0, list.Len())
+	for i := 0; i < list.Len(); i++ {
+		policy := NewHTTPPolicy()
+		if err := policy.From(list.At(i)); err != nil {
+			return fmt.Errorf("decode policy %d: %w", i, err)
+		}
+		b.Policies = append(b.Policies, policy)
+	}
+	return nil
 }
 
 func (b *HTTPRouteBuilder) AddPolicy(policy *HTTPPolicyBuilder) *HTTPRouteBuilder {
@@ -44,10 +90,10 @@ func (b *HTTPRouteBuilder) AddPolicy(policy *HTTPPolicyBuilder) *HTTPRouteBuilde
 }
 
 func (b *HTTPRouteBuilder) Build(zone ingress.HttpZone) error {
-	if err := requireText("name", b.Name); err != nil {
+	if err := requireText("hostname", b.HostName); err != nil {
 		return err
 	}
-	if err := zone.SetName(b.Name); err != nil {
+	if err := zone.SetHostname(b.HostName); err != nil {
 		return err
 	}
 	list, err := zone.NewHttpPolicies(int32(len(b.Policies)))
@@ -68,6 +114,116 @@ func (b *HTTPRouteBuilder) Build(zone ingress.HttpZone) error {
 func (b *HTTPPolicyBuilder) WithBackend(backend string) *HTTPPolicyBuilder {
 	b.Backend = backend
 	return b
+}
+
+func (b *HTTPPolicyBuilder) Use(other *HTTPPolicyBuilder) *HTTPPolicyBuilder {
+	if other == nil {
+		return b
+	}
+	b.Backend = other.Backend
+	b.PathnameKind = other.PathnameKind
+	b.Pathname = other.Pathname
+	b.FixContent = other.FixContent
+	b.AllowRawAccess = other.AllowRawAccess
+	if len(other.QueryItems) == 0 {
+		b.QueryItems = nil
+	} else {
+		b.QueryItems = append([]HTTPKV(nil), other.QueryItems...)
+	}
+	if len(other.HeaderItems) == 0 {
+		b.HeaderItems = nil
+	} else {
+		b.HeaderItems = append([]HTTPKV(nil), other.HeaderItems...)
+	}
+	return b
+}
+
+func (b *HTTPPolicyBuilder) From(policy ingress.HttpPolicy) error {
+	backend, err := policy.Backend()
+	if err != nil {
+		return err
+	}
+	fixContent, err := policy.FixContent()
+	if err != nil {
+		return err
+	}
+
+	b.Backend = backend
+	b.FixContent = fixContent
+	b.AllowRawAccess = policy.AllowRawAccess()
+	b.Pathname = ""
+	b.QueryItems = nil
+	b.HeaderItems = nil
+
+	switch policy.Which() {
+	case ingress.HttpPolicy_Which_pathname:
+		pathname, err := policy.Pathname()
+		if err != nil {
+			return err
+		}
+		b.PathnameKind = pathname.Kind()
+		switch pathname.Which() {
+		case ingress.Pathname_Which_exact:
+			b.Pathname, err = pathname.Exact()
+		case ingress.Pathname_Which_prefix:
+			b.Pathname, err = pathname.Prefix()
+		case ingress.Pathname_Which_regex:
+			b.Pathname, err = pathname.Regex()
+		default:
+			return fmt.Errorf("unsupported pathname union: %v", pathname.Which())
+		}
+		if err != nil {
+			return err
+		}
+	case ingress.HttpPolicy_Which_query:
+		query, err := policy.Query()
+		if err != nil {
+			return err
+		}
+		items, err := query.Items()
+		if err != nil {
+			return err
+		}
+		b.QueryItems = make([]HTTPKV, 0, items.Len())
+		for i := 0; i < items.Len(); i++ {
+			item := items.At(i)
+			key, err := item.Key()
+			if err != nil {
+				return err
+			}
+			value, err := item.Value()
+			if err != nil {
+				return err
+			}
+			b.QueryItems = append(b.QueryItems, HTTPKV{Key: key, Value: value})
+		}
+	case ingress.HttpPolicy_Which_header:
+		header, err := policy.Header()
+		if err != nil {
+			return err
+		}
+		items, err := header.Items()
+		if err != nil {
+			return err
+		}
+		b.HeaderItems = make([]HTTPKV, 0, items.Len())
+		for i := 0; i < items.Len(); i++ {
+			item := items.At(i)
+			key, err := item.Key()
+			if err != nil {
+				return err
+			}
+			value, err := item.Value()
+			if err != nil {
+				return err
+			}
+			b.HeaderItems = append(b.HeaderItems, HTTPKV{Key: key, Value: value})
+		}
+	default:
+		return fmt.Errorf("unsupported http policy union: %v", policy.Which())
+	}
+
+	return nil
 }
 
 func (b *HTTPPolicyBuilder) WithFixContent(fixContent string) *HTTPPolicyBuilder {

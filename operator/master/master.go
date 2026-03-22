@@ -13,7 +13,6 @@ import (
 
 	dns "aaa/DNS"
 	ingress "aaa/ingress"
-	acme "aaa/operator/master/acme"
 	"aaa/operator/master/objectstore"
 	"aaa/operator/replication"
 
@@ -57,41 +56,6 @@ type Master struct {
 	grpcAddr   string
 	webRoot    string
 	acme       ACMEConfig
-}
-
-func (m *Master) Root() string {
-	if m == nil || m.root == "" {
-		return defaultMasterRoot
-	}
-	return m.root
-}
-
-func (m *Master) ReadHTTP(ctx context.Context, hostname string) (acme.HTTPChange, error) {
-	change, err := m.ReadHTTPJSON(ctx, hostname)
-	if err != nil {
-		return acme.HTTPChange{}, err
-	}
-	return toACMEHTTPChange(change), nil
-}
-
-func (m *Master) PublishHTTPChange(ctx context.Context, hostname string, change acme.HTTPChange) error {
-	payload, err := marshalACMEHTTPChange(change)
-	if err != nil {
-		return err
-	}
-	_, err = m.PublishHTTPJSON(ctx, hostname, payload)
-	return err
-}
-
-func (m *Master) ReadTLS(ctx context.Context, hostname string) (acme.TLSChange, error) {
-	change, err := m.ReadTLSJSON(ctx, hostname)
-	if err != nil {
-		return acme.TLSChange{}, err
-	}
-	return acme.TLSChange{
-		CertPEM: change.CertPEM,
-		KeyPEM:  change.KeyPEM,
-	}, nil
 }
 
 func New(opts Options) (*Master, error) {
@@ -156,11 +120,11 @@ func (m *Master) publish(ctx context.Context, kind replication.EventType, hostna
 func objectKey(kind replication.EventType, hostname string) (string, error) {
 	switch kind {
 	case replication.EventType_EVENT_TYPE_DNS:
-		return filepath.ToSlash(filepath.Join(dns.DefaultZoneDir, hostname+".bin")), nil
+		return filepath.ToSlash(filepath.Join("dns", filepath.Base(dns.ZoneFilePath("", hostname)))), nil
 	case replication.EventType_EVENT_TYPE_TLS:
-		return filepath.ToSlash(filepath.Join(ingress.DefaultTLSDir, hostname+".bin")), nil
+		return filepath.ToSlash(filepath.Join("tls", filepath.Base(ingress.TLSZoneFilePath("", hostname)))), nil
 	case replication.EventType_EVENT_TYPE_HTTP:
-		return filepath.ToSlash(filepath.Join(ingress.DefaultHTTPDir, hostname+".bin")), nil
+		return filepath.ToSlash(filepath.Join("http", filepath.Base(ingress.HTTPZoneFilePath("", hostname)))), nil
 	default:
 		return "", fmt.Errorf("unsupported event type: %v", kind)
 	}

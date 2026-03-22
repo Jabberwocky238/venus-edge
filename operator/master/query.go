@@ -188,7 +188,7 @@ func decodeTLSChange(bin []byte) (TLSChangeJSON, error) {
 	if err != nil {
 		return TLSChangeJSON{}, err
 	}
-	name, err := zone.Name()
+	name, err := zone.Hostname()
 	if err != nil {
 		return TLSChangeJSON{}, err
 	}
@@ -235,7 +235,7 @@ func decodeHTTPChange(bin []byte) (HTTPChangeJSON, error) {
 	if err != nil {
 		return HTTPChangeJSON{}, err
 	}
-	name, err := zone.Name()
+	name, err := zone.Hostname()
 	if err != nil {
 		return HTTPChangeJSON{}, err
 	}
