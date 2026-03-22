@@ -1,7 +1,6 @@
 package master
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -49,27 +48,36 @@ type ACMEConfig struct {
 }
 
 type Master struct {
-	root       string
-	store      objectstore.Store
-	hub        *Hub
-	manageAddr string
-	grpcAddr   string
-	webRoot    string
-	acme       ACMEConfig
+	root        string
+	store       objectstore.Store
+	replication *replication.Coordinator
+	manageAddr  string
+	grpcAddr    string
+	webRoot     string
+	acme        ACMEConfig
 }
 
 func New(opts Options) (*Master, error) {
 	if opts.Store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
+	storeAdapter := storePersistor{store: opts.Store}
+	wal, err := replication.NewFileWAL(filepath.Join(opts.Root, "operator", "master", "wal"), storeAdapter)
+	if err != nil {
+		return nil, err
+	}
+	coord, err := replication.NewCoordinator("default", wal)
+	if err != nil {
+		return nil, err
+	}
 	return &Master{
-		root:       opts.Root,
-		store:      opts.Store,
-		hub:        NewHub(),
-		manageAddr: opts.ManageAddr,
-		grpcAddr:   opts.GRPCAddr,
-		webRoot:    opts.WebRoot,
-		acme:       opts.ACME,
+		root:        opts.Root,
+		store:       opts.Store,
+		replication: coord,
+		manageAddr:  opts.ManageAddr,
+		grpcAddr:    opts.GRPCAddr,
+		webRoot:     opts.WebRoot,
+		acme:        opts.ACME,
 	}, nil
 }
 
@@ -80,41 +88,34 @@ func (m *Master) ACME() ACMEConfig {
 	return m.acme
 }
 
-func (m *Master) PublishDNS(ctx context.Context, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
+func (m *Master) PublishDNS(ctx context.Context, hostname string, bin []byte) (version uint64, err error) {
 	return m.publish(ctx, replication.EventType_EVENT_TYPE_DNS, hostname, bin)
 }
 
-func (m *Master) PublishTLS(ctx context.Context, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
+func (m *Master) PublishTLS(ctx context.Context, hostname string, bin []byte) (version uint64, err error) {
 	return m.publish(ctx, replication.EventType_EVENT_TYPE_TLS, hostname, bin)
 }
 
-func (m *Master) PublishHTTP(ctx context.Context, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
+func (m *Master) PublishHTTP(ctx context.Context, hostname string, bin []byte) (version uint64, err error) {
 	return m.publish(ctx, replication.EventType_EVENT_TYPE_HTTP, hostname, bin)
 }
 
-func (m *Master) publish(ctx context.Context, kind replication.EventType, hostname string, bin []byte) (*replication.PushChangeResponse, error) {
-	if m.store == nil || m.hub == nil {
-		return nil, fmt.Errorf("master is not configured")
+func (m *Master) publish(ctx context.Context, kind replication.EventType, hostname string, bin []byte) (uint64, error) {
+	if m.store == nil || m.replication == nil {
+		return 0, fmt.Errorf("master is not configured")
 	}
 	key, err := objectKey(kind, hostname)
 	if err != nil {
-		logMasterPublish(kind, hostname, "", nil, err)
-		return nil, err
+		logMasterPublish(kind, hostname, "", 0, err)
+		return 0, err
 	}
-	if err := m.store.Put(ctx, key, bytes.NewReader(bin)); err != nil {
-		logMasterPublish(kind, hostname, key, nil, err)
-		return nil, err
+	version, err := m.replication.Publish(ctx, kind, hostname, bin)
+	if err != nil {
+		logMasterPublish(kind, hostname, key, 0, err)
+		return 0, err
 	}
-	ts := envelopeTimestampUnix()
-	resp := m.hub.Publish(&replication.ChangeEnvelope{
-		Cluster:       "default",
-		Type:          kind,
-		Hostname:      hostname,
-		Bin:           bin,
-		TimestampUnix: ts,
-	})
-	logMasterPublish(kind, hostname, key, resp, nil)
-	return resp, nil
+	logMasterPublish(kind, hostname, key, version, nil)
+	return version, nil
 }
 
 func objectKey(kind replication.EventType, hostname string) (string, error) {
@@ -138,7 +139,7 @@ func (m *Master) Start(ctx context.Context) error {
 		ctx = context.Background()
 	}
 
-	manageServer, err := NewManageServer(m, m.hub, m.webRoot)
+	manageServer, err := NewManageServer(m, m.webRoot)
 	if err != nil {
 		return err
 	}
@@ -155,7 +156,7 @@ func (m *Master) Start(ctx context.Context) error {
 	defer grpcListener.Close()
 
 	grpcServer := grpc.NewServer()
-	replication.NewServer(m.hub).Register(grpcServer)
+	replication.NewServer(m.replication).Register(grpcServer)
 	defer grpcServer.GracefulStop()
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -187,18 +188,12 @@ func (m *Master) Start(ctx context.Context) error {
 	return group.Wait()
 }
 
-func logMasterPublish(kind replication.EventType, hostname, key string, resp *replication.PushChangeResponse, err error) {
+func logMasterPublish(kind replication.EventType, hostname, key string, version uint64, err error) {
 	if err != nil {
 		log.Printf("%s %spublish%s %s hostname=%s key=%s err=%v", masterLogPrefix, masterLogFail, masterLogReset, masterEventLabel(kind), hostname, key, err)
 		return
 	}
-	accepted := false
-	message := ""
-	if resp != nil {
-		accepted = resp.Accepted
-		message = resp.Message
-	}
-	log.Printf("%s %spublish%s %s hostname=%s key=%s accepted=%t message=%q", masterLogPrefix, masterLogOK, masterLogReset, masterEventLabel(kind), hostname, key, accepted, message)
+	log.Printf("%s %spublish%s %s hostname=%s key=%s version_index=%d", masterLogPrefix, masterLogOK, masterLogReset, masterEventLabel(kind), hostname, key, version)
 }
 
 func masterEventLabel(kind replication.EventType) string {

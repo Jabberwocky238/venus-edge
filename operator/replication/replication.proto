@@ -11,6 +11,11 @@ enum EventType {
   EVENT_TYPE_HTTP = 3;
 }
 
+enum MessageTier {
+  MESSAGE_TIER_NORMAL = 0;
+  MESSAGE_TIER_RECOVER = 1;
+}
+
 message ChangeEnvelope {
   string cluster = 1;
   EventType type = 2;
@@ -18,6 +23,7 @@ message ChangeEnvelope {
   bytes bin = 4;
   int64 timestamp_unix = 5;
   uint64 version_index = 6;
+  MessageTier tier = 7;
 }
 
 message PushChangeRequest {

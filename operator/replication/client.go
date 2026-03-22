@@ -38,10 +38,11 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) Subscribe(ctx context.Context, podIP, agentID string, opts ...grpc.CallOption) (ReplicationService_SubscribeClient, error) {
+func (c *Client) Subscribe(ctx context.Context, podIP, agentID string, versionIndex uint64, opts ...grpc.CallOption) (ReplicationService_SubscribeClient, error) {
 	return c.client.Subscribe(ctx, &PushChangeRequest{
-		PodIp:   podIP,
-		AgentId: agentID,
+		PodIp:        podIP,
+		AgentId:      agentID,
+		VersionIndex: versionIndex,
 	}, opts...)
 }
 

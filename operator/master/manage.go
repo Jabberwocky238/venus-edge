@@ -24,14 +24,13 @@ import (
 
 type ManageServer struct {
 	master  *Master
-	hub     *Hub
 	webRoot string
 	mux     *http.ServeMux
 }
 
 type manageOverview struct {
-	NowUnix     int64                `json:"now_unix"`
-	Subscribers []SubscriberSnapshot `json:"subscribers"`
+	NowUnix     int64                            `json:"now_unix"`
+	Subscribers []replication.SubscriberSnapshot `json:"subscribers"`
 }
 
 type manageDNSPayload struct {
@@ -86,12 +85,9 @@ type manageHTTPKeyValue struct {
 	Value string `json:"value"`
 }
 
-func NewManageServer(m *Master, hub *Hub, webRoot string) (*ManageServer, error) {
+func NewManageServer(m *Master, webRoot string) (*ManageServer, error) {
 	if m == nil {
 		return nil, fmt.Errorf("master is required")
-	}
-	if hub == nil {
-		return nil, fmt.Errorf("hub is required")
 	}
 	if webRoot == "" {
 		webRoot = filepath.Join("operator", "web", "dist")
@@ -99,7 +95,6 @@ func NewManageServer(m *Master, hub *Hub, webRoot string) (*ManageServer, error)
 
 	s := &ManageServer{
 		master:  m,
-		hub:     hub,
 		webRoot: webRoot,
 		mux:     http.NewServeMux(),
 	}
@@ -164,7 +159,7 @@ func (s *ManageServer) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, manageOverview{
 		NowUnix:     time.Now().Unix(),
-		Subscribers: s.hub.Snapshot(),
+		Subscribers: s.master.replication.Snapshot(),
 	})
 }
 

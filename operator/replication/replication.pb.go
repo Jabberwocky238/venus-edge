@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v3.12.4
-// source: replication.proto
+// source: operator/replication/replication.proto
 
 package replication
 
@@ -57,11 +57,11 @@ func (x EventType) String() string {
 }
 
 func (EventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_replication_proto_enumTypes[0].Descriptor()
+	return file_operator_replication_replication_proto_enumTypes[0].Descriptor()
 }
 
 func (EventType) Type() protoreflect.EnumType {
-	return &file_replication_proto_enumTypes[0]
+	return &file_operator_replication_replication_proto_enumTypes[0]
 }
 
 func (x EventType) Number() protoreflect.EnumNumber {
@@ -70,7 +70,53 @@ func (x EventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventType.Descriptor instead.
 func (EventType) EnumDescriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{0}
+	return file_operator_replication_replication_proto_rawDescGZIP(), []int{0}
+}
+
+type MessageTier int32
+
+const (
+	MessageTier_MESSAGE_TIER_NORMAL  MessageTier = 0
+	MessageTier_MESSAGE_TIER_RECOVER MessageTier = 1
+)
+
+// Enum value maps for MessageTier.
+var (
+	MessageTier_name = map[int32]string{
+		0: "MESSAGE_TIER_NORMAL",
+		1: "MESSAGE_TIER_RECOVER",
+	}
+	MessageTier_value = map[string]int32{
+		"MESSAGE_TIER_NORMAL":  0,
+		"MESSAGE_TIER_RECOVER": 1,
+	}
+)
+
+func (x MessageTier) Enum() *MessageTier {
+	p := new(MessageTier)
+	*p = x
+	return p
+}
+
+func (x MessageTier) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (MessageTier) Descriptor() protoreflect.EnumDescriptor {
+	return file_operator_replication_replication_proto_enumTypes[1].Descriptor()
+}
+
+func (MessageTier) Type() protoreflect.EnumType {
+	return &file_operator_replication_replication_proto_enumTypes[1]
+}
+
+func (x MessageTier) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use MessageTier.Descriptor instead.
+func (MessageTier) EnumDescriptor() ([]byte, []int) {
+	return file_operator_replication_replication_proto_rawDescGZIP(), []int{1}
 }
 
 type ChangeEnvelope struct {
@@ -80,13 +126,15 @@ type ChangeEnvelope struct {
 	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Bin           []byte                 `protobuf:"bytes,4,opt,name=bin,proto3" json:"bin,omitempty"`
 	TimestampUnix int64                  `protobuf:"varint,5,opt,name=timestamp_unix,json=timestampUnix,proto3" json:"timestamp_unix,omitempty"`
+	VersionIndex  uint64                 `protobuf:"varint,6,opt,name=version_index,json=versionIndex,proto3" json:"version_index,omitempty"`
+	Tier          MessageTier            `protobuf:"varint,7,opt,name=tier,proto3,enum=operator.replication.MessageTier" json:"tier,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ChangeEnvelope) Reset() {
 	*x = ChangeEnvelope{}
-	mi := &file_replication_proto_msgTypes[0]
+	mi := &file_operator_replication_replication_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -98,7 +146,7 @@ func (x *ChangeEnvelope) String() string {
 func (*ChangeEnvelope) ProtoMessage() {}
 
 func (x *ChangeEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[0]
+	mi := &file_operator_replication_replication_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -111,7 +159,7 @@ func (x *ChangeEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeEnvelope.ProtoReflect.Descriptor instead.
 func (*ChangeEnvelope) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{0}
+	return file_operator_replication_replication_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ChangeEnvelope) GetCluster() string {
@@ -149,17 +197,32 @@ func (x *ChangeEnvelope) GetTimestampUnix() int64 {
 	return 0
 }
 
+func (x *ChangeEnvelope) GetVersionIndex() uint64 {
+	if x != nil {
+		return x.VersionIndex
+	}
+	return 0
+}
+
+func (x *ChangeEnvelope) GetTier() MessageTier {
+	if x != nil {
+		return x.Tier
+	}
+	return MessageTier_MESSAGE_TIER_NORMAL
+}
+
 type PushChangeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PodIp         string                 `protobuf:"bytes,1,opt,name=pod_ip,json=podIp,proto3" json:"pod_ip,omitempty"`
 	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	VersionIndex  uint64                 `protobuf:"varint,3,opt,name=version_index,json=versionIndex,proto3" json:"version_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PushChangeRequest) Reset() {
 	*x = PushChangeRequest{}
-	mi := &file_replication_proto_msgTypes[1]
+	mi := &file_operator_replication_replication_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -171,7 +234,7 @@ func (x *PushChangeRequest) String() string {
 func (*PushChangeRequest) ProtoMessage() {}
 
 func (x *PushChangeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[1]
+	mi := &file_operator_replication_replication_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -184,7 +247,7 @@ func (x *PushChangeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushChangeRequest.ProtoReflect.Descriptor instead.
 func (*PushChangeRequest) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{1}
+	return file_operator_replication_replication_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *PushChangeRequest) GetPodIp() string {
@@ -201,135 +264,94 @@ func (x *PushChangeRequest) GetAgentId() string {
 	return ""
 }
 
-type PushChangeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PushChangeResponse) Reset() {
-	*x = PushChangeResponse{}
-	mi := &file_replication_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PushChangeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PushChangeResponse) ProtoMessage() {}
-
-func (x *PushChangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_replication_proto_msgTypes[2]
+func (x *PushChangeRequest) GetVersionIndex() uint64 {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.VersionIndex
 	}
-	return mi.MessageOf(x)
+	return 0
 }
 
-// Deprecated: Use PushChangeResponse.ProtoReflect.Descriptor instead.
-func (*PushChangeResponse) Descriptor() ([]byte, []int) {
-	return file_replication_proto_rawDescGZIP(), []int{2}
-}
+var File_operator_replication_replication_proto protoreflect.FileDescriptor
 
-func (x *PushChangeResponse) GetAccepted() bool {
-	if x != nil {
-		return x.Accepted
-	}
-	return false
-}
-
-func (x *PushChangeResponse) GetMessage() string {
-	if x != nil {
-		return x.Message
-	}
-	return ""
-}
-
-var File_replication_proto protoreflect.FileDescriptor
-
-const file_replication_proto_rawDesc = "" +
+const file_operator_replication_replication_proto_rawDesc = "" +
 	"\n" +
-	"\x11replication.proto\x12\x14operator.replication\"\xb4\x01\n" +
+	"&operator/replication/replication.proto\x12\x14operator.replication\"\x90\x02\n" +
 	"\x0eChangeEnvelope\x12\x18\n" +
 	"\acluster\x18\x01 \x01(\tR\acluster\x123\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1f.operator.replication.EventTypeR\x04type\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\x10\n" +
 	"\x03bin\x18\x04 \x01(\fR\x03bin\x12%\n" +
-	"\x0etimestamp_unix\x18\x05 \x01(\x03R\rtimestampUnix\"E\n" +
+	"\x0etimestamp_unix\x18\x05 \x01(\x03R\rtimestampUnix\x12#\n" +
+	"\rversion_index\x18\x06 \x01(\x04R\fversionIndex\x125\n" +
+	"\x04tier\x18\a \x01(\x0e2!.operator.replication.MessageTierR\x04tier\"j\n" +
 	"\x11PushChangeRequest\x12\x15\n" +
 	"\x06pod_ip\x18\x01 \x01(\tR\x05podIp\x12\x19\n" +
-	"\bagent_id\x18\x02 \x01(\tR\aagentId\"J\n" +
-	"\x12PushChangeResponse\x12\x1a\n" +
-	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*d\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12#\n" +
+	"\rversion_index\x18\x03 \x01(\x04R\fversionIndex*d\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eEVENT_TYPE_DNS\x10\x01\x12\x12\n" +
 	"\x0eEVENT_TYPE_TLS\x10\x02\x12\x13\n" +
-	"\x0fEVENT_TYPE_HTTP\x10\x032r\n" +
+	"\x0fEVENT_TYPE_HTTP\x10\x03*@\n" +
+	"\vMessageTier\x12\x17\n" +
+	"\x13MESSAGE_TIER_NORMAL\x10\x00\x12\x18\n" +
+	"\x14MESSAGE_TIER_RECOVER\x10\x012r\n" +
 	"\x12ReplicationService\x12\\\n" +
 	"\tSubscribe\x12'.operator.replication.PushChangeRequest\x1a$.operator.replication.ChangeEnvelope0\x01B&Z$aaa/operator/replication;replicationb\x06proto3"
 
 var (
-	file_replication_proto_rawDescOnce sync.Once
-	file_replication_proto_rawDescData []byte
+	file_operator_replication_replication_proto_rawDescOnce sync.Once
+	file_operator_replication_replication_proto_rawDescData []byte
 )
 
-func file_replication_proto_rawDescGZIP() []byte {
-	file_replication_proto_rawDescOnce.Do(func() {
-		file_replication_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)))
+func file_operator_replication_replication_proto_rawDescGZIP() []byte {
+	file_operator_replication_replication_proto_rawDescOnce.Do(func() {
+		file_operator_replication_replication_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_operator_replication_replication_proto_rawDesc), len(file_operator_replication_replication_proto_rawDesc)))
 	})
-	return file_replication_proto_rawDescData
+	return file_operator_replication_replication_proto_rawDescData
 }
 
-var file_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-var file_replication_proto_goTypes = []any{
-	(EventType)(0),             // 0: operator.replication.EventType
-	(*ChangeEnvelope)(nil),     // 1: operator.replication.ChangeEnvelope
-	(*PushChangeRequest)(nil),  // 2: operator.replication.PushChangeRequest
-	(*PushChangeResponse)(nil), // 3: operator.replication.PushChangeResponse
+var file_operator_replication_replication_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_operator_replication_replication_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_operator_replication_replication_proto_goTypes = []any{
+	(EventType)(0),            // 0: operator.replication.EventType
+	(MessageTier)(0),          // 1: operator.replication.MessageTier
+	(*ChangeEnvelope)(nil),    // 2: operator.replication.ChangeEnvelope
+	(*PushChangeRequest)(nil), // 3: operator.replication.PushChangeRequest
 }
-var file_replication_proto_depIdxs = []int32{
+var file_operator_replication_replication_proto_depIdxs = []int32{
 	0, // 0: operator.replication.ChangeEnvelope.type:type_name -> operator.replication.EventType
-	2, // 1: operator.replication.ReplicationService.Subscribe:input_type -> operator.replication.PushChangeRequest
-	1, // 2: operator.replication.ReplicationService.Subscribe:output_type -> operator.replication.ChangeEnvelope
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: operator.replication.ChangeEnvelope.tier:type_name -> operator.replication.MessageTier
+	3, // 2: operator.replication.ReplicationService.Subscribe:input_type -> operator.replication.PushChangeRequest
+	2, // 3: operator.replication.ReplicationService.Subscribe:output_type -> operator.replication.ChangeEnvelope
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_replication_proto_init() }
-func file_replication_proto_init() {
-	if File_replication_proto != nil {
+func init() { file_operator_replication_replication_proto_init() }
+func file_operator_replication_replication_proto_init() {
+	if File_operator_replication_replication_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_replication_proto_rawDesc), len(file_replication_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   3,
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_operator_replication_replication_proto_rawDesc), len(file_operator_replication_replication_proto_rawDesc)),
+			NumEnums:      2,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_replication_proto_goTypes,
-		DependencyIndexes: file_replication_proto_depIdxs,
-		EnumInfos:         file_replication_proto_enumTypes,
-		MessageInfos:      file_replication_proto_msgTypes,
+		GoTypes:           file_operator_replication_replication_proto_goTypes,
+		DependencyIndexes: file_operator_replication_replication_proto_depIdxs,
+		EnumInfos:         file_operator_replication_replication_proto_enumTypes,
+		MessageInfos:      file_operator_replication_replication_proto_msgTypes,
 	}.Build()
-	File_replication_proto = out.File
-	file_replication_proto_goTypes = nil
-	file_replication_proto_depIdxs = nil
+	File_operator_replication_replication_proto = out.File
+	file_operator_replication_replication_proto_goTypes = nil
+	file_operator_replication_replication_proto_depIdxs = nil
 }

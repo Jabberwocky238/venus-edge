@@ -41,14 +41,14 @@ func (m *Master) PublishHTTPRoute(ctx context.Context, hostname string, route *i
 	return err
 }
 
-func (m *Master) PublishHTTPRouteWithACME(ctx context.Context, hostname string, route *ingressbuilder.HTTPRouteBuilder) (*replication.PushChangeResponse, error) {
+func (m *Master) PublishHTTPRouteWithACME(ctx context.Context, hostname string, route *ingressbuilder.HTTPRouteBuilder) (uint64, error) {
 	bin, err := renderHTTPRoute(route)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	resp, err := m.PublishHTTP(ctx, hostname, bin)
+	version, err := m.PublishHTTP(ctx, hostname, bin)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	routeCopy := ingressbuilder.NewHTTPRoute().Use(route)
@@ -64,7 +64,7 @@ func (m *Master) PublishHTTPRouteWithACME(ctx context.Context, hostname string, 
 		}
 	}()
 
-	return resp, nil
+	return version, nil
 }
 
 func (m *Master) ReadTLSRoute(ctx context.Context, hostname string) (*ingressbuilder.TLSRouteBuilder, error) {
@@ -92,10 +92,10 @@ func (m *Master) PublishTLSRoute(ctx context.Context, hostname string, route *in
 	return err
 }
 
-func (m *Master) PublishTLSRouteWithResponse(ctx context.Context, hostname string, route *ingressbuilder.TLSRouteBuilder) (*replication.PushChangeResponse, error) {
+func (m *Master) PublishTLSRouteWithResponse(ctx context.Context, hostname string, route *ingressbuilder.TLSRouteBuilder) (uint64, error) {
 	bin, err := renderTLSRoute(route)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	return m.PublishTLS(ctx, hostname, bin)
 }

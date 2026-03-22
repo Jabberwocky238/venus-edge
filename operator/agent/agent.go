@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -22,7 +21,8 @@ const (
 )
 
 type Agent struct {
-	root string
+	root         string
+	versionStore replication.VersionStore
 }
 
 func New(root string) (*Agent, error) {
@@ -35,53 +35,44 @@ func New(root string) (*Agent, error) {
 	if err := ingress.EnsureZoneDirs(filepath.Join(root, ingress.DefaultIngressRoot)); err != nil {
 		return nil, err
 	}
-	return &Agent{root: root}, nil
+	return &Agent{
+		root:         root,
+		versionStore: replication.NewFileVersionStore(filepath.Join(root, "agent", ".version_index")),
+	}, nil
 }
 
-func (a *Agent) HandlePushChange(ctx context.Context, change *replication.ChangeEnvelope) (*replication.PushChangeResponse, error) {
+func (a *Agent) Apply(ctx context.Context, change *replication.ChangeEnvelope) error {
 	if change == nil {
-		return nil, fmt.Errorf("change is required")
+		return fmt.Errorf("change is required")
 	}
 	if change.Hostname == "" {
-		return nil, fmt.Errorf("hostname is required")
+		return fmt.Errorf("hostname is required")
 	}
 	if len(change.Bin) == 0 {
-		return nil, fmt.Errorf("bin is required")
+		return fmt.Errorf("bin is required")
 	}
 	target, err := a.targetPath(change.Type, change.Hostname)
 	if err != nil {
 		logAgentApply(change, "", err)
-		return nil, err
+		return err
 	}
 	if err := a.writeAtomically(target, change.Bin); err != nil {
 		logAgentApply(change, target, err)
-		return nil, err
+		return err
 	}
 	logAgentApply(change, target, nil)
-	return &replication.PushChangeResponse{Accepted: true, Message: "applied"}, nil
+	return nil
 }
 
 func (a *Agent) Subscribe(ctx context.Context, client *replication.Client, podIP, agentID string) error {
 	if client == nil {
 		return fmt.Errorf("replication client is required")
 	}
-	stream, err := client.Subscribe(ctx, podIP, agentID)
+	follower, err := replication.NewFollower(client, a, a.versionStore, podIP, agentID)
 	if err != nil {
 		return err
 	}
-	for {
-		change, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-		logAgentReceive(change)
-		if _, err := a.HandlePushChange(ctx, change); err != nil {
-			return err
-		}
-	}
+	return follower.Run(ctx)
 }
 
 func (a *Agent) targetPath(kind replication.EventType, hostname string) (string, error) {

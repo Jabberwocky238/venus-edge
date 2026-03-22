@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-proto="${script_dir}/replication.proto"
+proto="${script_dir}/operator/replication/replication.proto"
 
 gopath="$(go env GOPATH)"
 protoc_gen_go="${GOBIN:-${gopath}/bin}/protoc-gen-go"

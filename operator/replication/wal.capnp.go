@@ -14,12 +14,12 @@ type EventItem capnp.Struct
 const EventItem_TypeID = 0xa560b6ae1894b3bc
 
 func NewEventItem(s *capnp.Segment) (EventItem, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return EventItem(st), err
 }
 
 func NewRootEventItem(s *capnp.Segment) (EventItem, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
 	return EventItem(st), err
 }
 
@@ -71,6 +71,24 @@ func (s EventItem) SetEventType(v EventItem_EventType) {
 	capnp.Struct(s).SetUint16(8, uint16(v))
 }
 
+func (s EventItem) EventKey() (string, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.Text(), err
+}
+
+func (s EventItem) HasEventKey() bool {
+	return capnp.Struct(s).HasPtr(0)
+}
+
+func (s EventItem) EventKeyBytes() ([]byte, error) {
+	p, err := capnp.Struct(s).Ptr(0)
+	return p.TextBytes(), err
+}
+
+func (s EventItem) SetEventKey(v string) error {
+	return capnp.Struct(s).SetText(0, v)
+}
+
 func (s EventItem) EventAction() EventItem_EventAction {
 	return EventItem_EventAction(capnp.Struct(s).Uint16(10))
 }
@@ -100,7 +118,7 @@ type EventItem_List = capnp.StructList[EventItem]
 
 // NewEventItem creates a new list of EventItem.
 func NewEventItem_List(s *capnp.Segment, sz int32) (EventItem_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 0}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1}, sz)
 	return capnp.StructList[EventItem](l), err
 }
 
@@ -212,17 +230,17 @@ const EventItem_Status_TypeID = 0xceda55c195ff460d
 
 // Values of EventItem_Status.
 const (
-	EventItem_Status_done    EventItem_Status = 0
-	EventItem_Status_pending EventItem_Status = 1
+	EventItem_Status_overlaped EventItem_Status = 0
+	EventItem_Status_ontop     EventItem_Status = 1
 )
 
 // String returns the enum's constant name.
 func (c EventItem_Status) String() string {
 	switch c {
-	case EventItem_Status_done:
-		return "done"
-	case EventItem_Status_pending:
-		return "pending"
+	case EventItem_Status_overlaped:
+		return "overlaped"
+	case EventItem_Status_ontop:
+		return "ontop"
 
 	default:
 		return ""
@@ -233,10 +251,10 @@ func (c EventItem_Status) String() string {
 // or the zero value if there's no such value.
 func EventItem_StatusFromString(c string) EventItem_Status {
 	switch c {
-	case "done":
-		return EventItem_Status_done
-	case "pending":
-		return EventItem_Status_pending
+	case "overlaped":
+		return EventItem_Status_overlaped
+	case "ontop":
+		return EventItem_Status_ontop
 
 	default:
 		return 0
@@ -255,12 +273,12 @@ type EventLog capnp.Struct
 const EventLog_TypeID = 0xa9daaf59f32abbe5
 
 func NewEventLog(s *capnp.Segment) (EventLog, error) {
-	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
+	st, err := capnp.NewStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return EventLog(st), err
 }
 
 func NewRootEventLog(s *capnp.Segment) (EventLog, error) {
-	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1})
+	st, err := capnp.NewRootStruct(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1})
 	return EventLog(st), err
 }
 
@@ -327,20 +345,28 @@ func (s EventLog) SetTotal(v uint64) {
 	capnp.Struct(s).SetUint64(0, v)
 }
 
-func (s EventLog) StartTime() uint64 {
+func (s EventLog) NotOverlap() uint64 {
 	return capnp.Struct(s).Uint64(8)
 }
 
-func (s EventLog) SetStartTime(v uint64) {
+func (s EventLog) SetNotOverlap(v uint64) {
 	capnp.Struct(s).SetUint64(8, v)
 }
 
-func (s EventLog) CloseTime() uint64 {
+func (s EventLog) StartTime() uint64 {
 	return capnp.Struct(s).Uint64(16)
 }
 
-func (s EventLog) SetCloseTime(v uint64) {
+func (s EventLog) SetStartTime(v uint64) {
 	capnp.Struct(s).SetUint64(16, v)
+}
+
+func (s EventLog) CloseTime() uint64 {
+	return capnp.Struct(s).Uint64(24)
+}
+
+func (s EventLog) SetCloseTime(v uint64) {
+	capnp.Struct(s).SetUint64(24, v)
 }
 
 // EventLog_List is a list of EventLog.
@@ -348,7 +374,7 @@ type EventLog_List = capnp.StructList[EventLog]
 
 // NewEventLog creates a new list of EventLog.
 func NewEventLog_List(s *capnp.Segment, sz int32) (EventLog_List, error) {
-	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 24, PointerCount: 1}, sz)
+	l, err := capnp.NewCompositeList(s, capnp.ObjectSize{DataSize: 32, PointerCount: 1}, sz)
 	return capnp.StructList[EventLog](l), err
 }
 
@@ -360,44 +386,47 @@ func (f EventLog_Future) Struct() (EventLog, error) {
 	return EventLog(p.Struct()), err
 }
 
-const schema_c4f4d6e1d8b1a271 = "x\xda\x94\x92OH\x15_\x14\xc7\xcfw\xee<\xe7'" +
-	"\xf8~\xe3e\x9e\x90\x0by m\x12\xd2\xf2-\x047" +
-	"\xa6``\x04y\xcd\x16A\x8b\xc6\xf7\xae60\xceL" +
-	"o\xee+\x85\xa2\x92\x16I\x09\x15\xb6\xe8\xcf\xc2\x02\x17" +
-	"E\x14\x11\xb5\xa9M\xd0\xa6M\xcb\x08\x17\xa1\x8bh\x1d" +
-	"\xb5h\x11L\xdc\xf7w\xd0E\xb6\x9a\xe1\x9c3\x9f9" +
-	"\xe7s\xce\x81\x09\x1c2\x0ff\xf3\x8c\x0c\xb17\xd3\x96" +
-	"\x0c\xfe\x8a\xbfL\xde_\xb9N|\x9f\x91\xbc}\xb9\xba" +
-	"\xe7\xd9\xeb\xd3\xebD(T\xf0\x04\xce\x0a,\"g\x19" +
-	"C\x84\xe4\xf7\xd3\xcd\xdb\xe3[\x9bk;*Wp\x0f" +
-	"\xcez\xb5\xf2!\x8e\x11ZI\x91\x07K\xce>z\xf1" +
-	"y\xeb\xd3\xcf\xf7dZD\x85W8\x02\xe7\x03\x86\x88" +
-	"\x0a\xdf\x91\x07!\xf9\xfa\xa6\xef\xc7\xc9\xe7\x1b\x8f\xb7U" +
-	"g4\xb0\x90ecpz\x98fw\xb3o\x84${" +
-	"8\xb9\xf3\xee\xc4\xc6\xc7\x1d]d\xcc%8\xdd\xfa\x1f" +
-	"N\x979D\xfb\x930\x92eW\x85\xe5\xcc@YF" +
-	"\xbeWt\x95\x17\x06\x03\xe7]\xbf\xbf\xe8FA4<" +
-	"~N\x06jB\xc9\xf9\xfe\xea\xdbh\xd1\xd6\x05\x93\x80" +
-	"\xf8\x0f\x06\x11\xe7\xbdD\x00o\xef%\xb2\xa2\x8a\xb2J" +
-	"\xd2\xffW\xe6\xf4\"\x8b\xa4&vT\x89=5b\x97" +
-	"~\x18<\xdbGd\x95\x82\xd8R~l\x9fQ*j" +
-	"\xd2\xcd\xbf\xd1\x89D\x07\xd2\x1b\xe1S\xa9E\xf2\x99\x94" +
-	"%>\x9c\xd4[\x89\x082\xa9\x8f\xaa\xc8\xf2\xc2`\xe4" +
-	"\xb8rU%\x169f\x12\x99 \xe2\x17\x07\x89\xc4\x02" +
-	"\x83\xb8j\x80\xc3\xccA\x07\xafL\x11\x89\xcb\x0c\xe2\x86" +
-	"\x01ndr\xd5Y\x96g\x88\xc45\x06\xb1j\x803" +
-	"#\x07F\xc4o-\x11\x89\x9b\x0c\xe2\x81\x01n\xb6\xe5" +
-	"`\x12\xf1\xbb\xc3Db\x95A\xac\x19\xc8{AI." +
-	"\xa0\x9d\x0c\xb4\x13\x12\xd9\xea\x0cvk\x1c\x02\xecF\xb6" +
-	"\xd1+\xec\xd6\x84\xf5\xbc\xef\xc6jtvV\xa2\xa8&" +
-	"4\x96\x1a\xdc\x91\xb8:\x17\xec\x96\x87\xfa'\xbb2|" +
-	"4\x9c#\xbd\xb4\xce\xa6\x16Wk9\xc5 \x16\x0c\x00" +
-	"5+\x15\x1d\x8b\x18\xc4\x05m\x055+\x8bS)\x7f" +
-	"\x0d+i\x7fyO\xc9\xf9\x18\xff\x13&\x19\xd0\x99\xbe" +
-	"`\x1d\xcc\xabP\xb9~\xd3O\xac\xdc\xb2\x9a\xf6\xe6\xb5" +
-	"\x9fF\xac\xe8\x87\xb1\xdc\x16\xdb\xfdY\xd66N\xa9+" +
-	"\xef\xab]\xf9\x18\x91]\x0a\x03y)\x92A\xc9\x0b\xe6" +
-	"\xfe\x04\x00\x00\xff\xff\x8c\xab1\xdc"
+const schema_c4f4d6e1d8b1a271 = "x\xda\x94\x93\xcfKT]\x18\xc7\x9f\xef9w\x9cW" +
+	"\x98y\xe7=\xcc\xbc\xe0&\x06\xa4MBZ\xba\x10\xdc" +
+	"\x98\x81\x81V\xe8\x99\x8c0\x08\xba\xce\x1ck\xe2z\xef" +
+	"m\xee\xd1t\xd1Fh\x11\xe5\xa2P\xc8~\x80E\x03" +
+	"\x15\xf6\x8b2\x84\x0a\x0a\xdc\xb4i\x19\xe1\"t\xd1\x1f" +
+	"\x10\xb5h\x11\xdc8\xf3\x1b]d\xab\xb9|\xcf\xf7|" +
+	"\xcf\xf3|\x9eg\xf6\x9d\xc3\x01k\x7f<\xcd\x89\xc9\xdd" +
+	"\x91\xa6\xb0\xf3g\xf0e\xf8\xd6\xdc\x15\x12{X\xf8\xe6" +
+	"\xc5|\xcb\x93W\xa7\x8bD\xe8\x9a\xc4#$\xe7\x10%" +
+	"J^F7!\xfc\xb5\xbcq\xbd\x7fsci\x9bs" +
+	"\x0e7\x91,\x96\x9cw1D\xa8\x1f\xca4xx\xfe" +
+	"\xde\xf3\xcf\x9b\x9f~\xacQ\xc4X\xbaV0\x88\xe4\x07" +
+	"t\x13u}\xc3\x09\x10\xc2\xaf\xaf\xdb\xbe\x8f>]\x7f" +
+	"h\xec\xd6V\xfbQ~\x10\xc9S\xdc|\x8e\xf2\xb4\xb1" +
+	"\xc7\x0f\x85\x0b\xef\x8f\xaf\x7f\xdcV\xc7%k\x16\xc9E" +
+	"\xcb\xd4\xb1`u\xd3\xde\xd0\xf3U\xc1\xd6^!\xd2Q" +
+	"P\xbe\x93\xcf\xda:\xef\xb9\x1d\x17l\xa7=k\xfb\xae" +
+	"\xdf\xd3?\xa5\\=\xa0\xd5D{\xe9\xab/\x9b0\x86" +
+	"a@\xfe\x03F$D+\x11 \x9a[\x89\xa2\xfe\xa4" +
+	"\x8e\xe6\x94\xf3\xb7\x99#3\xdcW&1VJ\xdcU" +
+	"N\xfc\xdf\xfc0\x11o#\x8a\xe6\xdc \xaa\x9d q" +
+	"Vk\xbf\x96n\xfd)\x9dH\xc6\xd08\x13\x91i\x18" +
+	"\xa5\x18k\xa0$z\xc2J)>A\x85\x95V5E" +
+	"\xf3\x9e\xdb{L\xdbz2\x90-\xdc\"\xb2@$\x16" +
+	";\x89\xe4<\x87\\b\x10\xb0R0\xe2\x9d\x0c\x91\xbc" +
+	"\xcd!\x1f0\x80\xa5J\xad\x14\x07\x89\xe4}\x0e\xf9\x8c" +
+	"A\xf0H\x0a\x9cH<\x1e#\x92\xcb\x1cr\x95AX" +
+	",\x05\x8bH\xac\xcc\x12\xc9\x97\x1c\xf2\x1d\x83\x884\xa5" +
+	"\x10!\x12o{\x88\xe4*\x87\\cH\xe7\xdd\x9c\x9a" +
+	"F314\x13BU\xaf\x16\x89z\x8b\x04$\xaa\xa7" +
+	"\x87\xd5\x0c\x11!F\x0c\xb1\xaaV\xed\x09\x89:\x89\xca" +
+	"\x1d\xc7\x0et\xdf\xf8\xb8BV\x0f\x98\xa7\xa8\xfaVo" +
+	"P\xea\x1f\x89:\xaf\xca\x95\x1dM\xe2\x88w\x86\xccp" +
+	"S5|\x17\x0d\xbei\x0e9\xcf\x00\x94\xe9]3\xda" +
+	"U\x0ey\x83A0\x94\xf1-\x9cl\xe0\xccY\x19_" +
+	"#ga\xf12\xbeb\xa6\x0e:\x9d\xd7j\"\xc0\xbf" +
+	"\x84a\x0e\xfc\xd7\xb8\xfeFLkO\xdbN\x0d\xa4\xeb" +
+	"\xe9\xa1)Up\x88\xdb~M\x0c\xb4]\xd0#\xf9\x09" +
+	"C\xb7\xaae\x1d/P[\xb4\x9d/zy\x87\xa8\xe1" +
+	"\x7f\x93)my\xbc\x93(\xf4L\x01\xb6\xaf\x08\xb9\xb4" +
+	"\xe7j\xcf\xff\x1d\x00\x00\xff\xff\xc1kI."
 
 func RegisterSchema(reg *schemas.Registry) {
 	reg.Register(&schemas.Schema{
