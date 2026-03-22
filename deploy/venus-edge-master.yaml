@@ -19,7 +19,6 @@ metadata:
 type: Opaque
 stringData:
   VENUS_ACME_EAB_HMAC_KEY: ""
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -51,7 +50,6 @@ spec:
       labels:
         app: venus-master
     spec:
-      serviceAccountName: venus-edge-master
       containers:
         - name: master
           image: ghcr.io/jabberwocky238/venus-edge:latest

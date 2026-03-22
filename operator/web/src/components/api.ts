@@ -48,6 +48,9 @@ export type HTTPPolicy = {
   pathname?: string
   query_items?: HTTPKeyValue[]
   header_items?: HTTPKeyValue[]
+  use_fix_content?: boolean
+  fix_content?: string
+  allow_raw_access?: boolean
 }
 
 export type HTTPPayload = {

@@ -4,6 +4,41 @@ import BoardShell from '../components/BoardShell.tsx'
 import { type HTTPPayload, publishResource, requestResource } from '../components/api.ts'
 import { createHTTPDraftPolicy, createHTTPPayload, type HTTPDraftPolicy } from '../components/http.ts'
 
+function validateBackendURL(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return 'Backend URL is required when Fix Content is disabled.'
+  }
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return 'Backend URL must start with http:// or https://.'
+    }
+  } catch {
+    return 'Backend URL must be a valid absolute URL.'
+  }
+  return null
+}
+
+function validateHTTPPolicy(policy: HTTPDraftPolicy) {
+  const mode =
+    policy.query_items && policy.query_items.length > 0
+      ? 'query'
+      : policy.header_items && policy.header_items.length > 0
+        ? 'header'
+        : 'pathname'
+
+  if (mode === 'pathname' && !policy.pathname?.trim()) {
+    return 'Pathname is required in pathname mode.'
+  }
+
+  if (!policy.use_fix_content) {
+    return validateBackendURL(policy.backend || '')
+  }
+
+  return null
+}
+
 export default function HTTPPage() {
   const [hostname, setHostname] = useState('')
   const [policies, setPolicies] = useState<HTTPDraftPolicy[]>([])
@@ -42,6 +77,14 @@ export default function HTTPPage() {
       setError('hostname is required')
       return
     }
+    for (const policy of policies) {
+      const validationError = validateHTTPPolicy(policy)
+      if (validationError) {
+        setError(validationError)
+        setMessage(null)
+        return
+      }
+    }
     setFlushing(true)
     setError(null)
     setMessage(null)
@@ -68,9 +111,16 @@ export default function HTTPPage() {
 
   const confirmCreate = () => {
     if (!creating) return
+    const validationError = validateHTTPPolicy(creating)
+    if (validationError) {
+      setError(validationError)
+      setMessage(null)
+      return
+    }
     setPolicies((current) => [creating, ...current])
     setCreating(null)
     setDirty(true)
+    setError(null)
   }
 
   return (
@@ -157,6 +207,9 @@ function HTTPPolicyEditor({
       : policy.header_items && policy.header_items.length > 0
         ? 'header'
         : 'pathname'
+  const useFixContent = Boolean(policy.use_fix_content)
+  const validationError = validateHTTPPolicy(policy)
+  const canConfirm = !validationError
 
   const setMode = (nextMode: 'pathname' | 'query' | 'header') => {
     if (nextMode === 'pathname') {
@@ -180,7 +233,16 @@ function HTTPPolicyEditor({
           {isCreate ? (
             <>
               <button type="button" onClick={onDelete} className="rounded-full bg-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Cancel</button>
-              <button type="button" onClick={onConfirm} className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">Confirm</button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={!canConfirm}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold text-white ${
+                  canConfirm ? 'bg-emerald-600' : 'cursor-not-allowed bg-slate-300'
+                }`}
+              >
+                Confirm
+              </button>
             </>
           ) : (
             <button type="button" onClick={onDelete} className="rounded-full bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-700">Delete</button>
@@ -189,13 +251,58 @@ function HTTPPolicyEditor({
       </div>
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <Field label="Backend"><input value={policy.backend} onChange={(e) => onChange({ backend: e.target.value })} className={inputClassName} /></Field>
+        <Field label="Response Mode">
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <input
+              type="checkbox"
+              checked={useFixContent}
+              onChange={(e) =>
+                onChange(
+                  e.target.checked
+                    ? { use_fix_content: true, fix_content: policy.fix_content || '', backend: '' }
+                    : { use_fix_content: false, fix_content: '', backend: policy.backend || '' },
+                )
+              }
+            />
+            <span className="text-sm text-slate-700">Use Fix Content instead of Backend URL</span>
+          </label>
+        </Field>
         <Field label="Match Mode">
           <select value={mode} onChange={(e) => setMode(e.target.value as 'pathname' | 'query' | 'header')} className={inputClassName}>
             <option value="pathname">pathname</option>
             <option value="query">query</option>
             <option value="header">header</option>
           </select>
+        </Field>
+        {useFixContent ? (
+          <Field label="Fix Content" className="md:col-span-2">
+            <textarea
+              value={policy.fix_content || ''}
+              onChange={(e) => onChange({ use_fix_content: true, fix_content: e.target.value, backend: '' })}
+              className={`${inputClassName} min-h-24`}
+            />
+          </Field>
+        ) : (
+          <Field label="Backend URL (eg: http://127.0.0.1:8081)" className="md:col-span-2">
+              <input
+                value={policy.backend}
+                onChange={(e) => onChange({ use_fix_content: false, backend: e.target.value, fix_content: '' })}
+                className={inputClassName}
+              />
+              {validationError && !useFixContent ? (
+                <p className="mt-2 text-xs font-medium text-rose-600">{validationError}</p>
+              ) : null}
+            </Field>
+        )}
+        <Field label="Allow Raw Access" className="md:col-span-2">
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <input
+              type="checkbox"
+              checked={Boolean(policy.allow_raw_access)}
+              onChange={(e) => onChange({ allow_raw_access: e.target.checked })}
+            />
+            <span className="text-sm text-slate-700">Enable raw access for this policy</span>
+          </label>
         </Field>
         {mode === 'pathname' ? (
           <>
@@ -206,8 +313,11 @@ function HTTPPolicyEditor({
                 <option value="regex">regex</option>
               </select>
             </Field>
-            <Field label="Pathname" className="md:col-span-2">
+            <Field label="Pathname" className="md:col-span-1">
               <input value={policy.pathname || ''} onChange={(e) => onChange({ pathname: e.target.value })} className={inputClassName} />
+              {validationError && mode === 'pathname' ? (
+                <p className="mt-2 text-xs font-medium text-rose-600">{validationError}</p>
+              ) : null}
             </Field>
           </>
         ) : (

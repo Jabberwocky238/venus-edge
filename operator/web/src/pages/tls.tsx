@@ -111,7 +111,7 @@ export default function TLSPage() {
             </select>
           </Field>
           <Field label="Backend Port"><input value={draft.backend_port ?? ''} onChange={(e) => patch({ backend_port: Number(e.target.value) || 0 })} className={inputClassName} /></Field>
-          <Field label="Backend Hostname" className="md:col-span-2"><input value={draft.backend_hostname || ''} onChange={(e) => patch({ backend_hostname: e.target.value })} className={inputClassName} /></Field>
+          <Field label="Backend Hostname (eg: 127.0.0.1 or api.example.com)" className="md:col-span-2"><input value={draft.backend_hostname || ''} onChange={(e) => patch({ backend_hostname: e.target.value })} className={inputClassName} /></Field>
           <Field label="Certificate PEM" className="md:col-span-2">
             <textarea value={draft.cert_pem || ''} onChange={(e) => patch({ cert_pem: e.target.value })} className={`${inputClassName} min-h-44`} />
           </Field>

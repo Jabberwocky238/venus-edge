@@ -39,7 +39,6 @@ spec:
     - name: https
       port: 443
       targetPort: 443
----
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -58,7 +57,6 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      serviceAccountName: venus-edge-agent
       initContainers:
         - name: prepare-geoip-mmdb
           image: curlimages/curl:8.12.1
