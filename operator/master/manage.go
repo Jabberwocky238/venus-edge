@@ -238,10 +238,18 @@ func (w *manageLogResponseWriter) WriteHeader(statusCode int) {
 }
 
 func logManageRequest(r *http.Request) {
+	if r.URL.Path == "/api/healthz" {
+		// Skip logging healthz requests to reduce noise
+		return
+	}
 	log.Printf("%s request %s %s", masterLogPrefix, r.Method, fullManagePath(r))
 }
 
 func logManageResponse(r *http.Request, statusCode int, statusText string) {
+	// Skip logging healthz responses to reduce noise
+	if r.URL.Path == "/api/healthz" {
+		return
+	}
 	color := masterLogOK
 	if statusCode >= http.StatusBadRequest {
 		color = masterLogFail
