@@ -22,6 +22,7 @@ const (
 
 type Agent struct {
 	root         string
+	walManager   *replication.WALManager
 	versionStore replication.VersionStore
 }
 
@@ -35,10 +36,18 @@ func New(root string) (*Agent, error) {
 	if err := ingress.EnsureZoneDirs(filepath.Join(root, ingress.DefaultIngressRoot)); err != nil {
 		return nil, err
 	}
-	return &Agent{
-		root:         root,
-		versionStore: replication.NewFileVersionStore(filepath.Join(root, "agent", ".version_index")),
-	}, nil
+	a := &Agent{root: root}
+	wal, err := replication.NewFileWAL(filepath.Join(root, "agent", "wal"), a)
+	if err != nil {
+		return nil, err
+	}
+	walManager, err := replication.NewWALManager("default", wal, a)
+	if err != nil {
+		return nil, err
+	}
+	a.walManager = walManager
+	a.versionStore = walManager
+	return a, nil
 }
 
 func (a *Agent) Apply(ctx context.Context, change *replication.ChangeEnvelope) error {
@@ -56,12 +65,31 @@ func (a *Agent) Apply(ctx context.Context, change *replication.ChangeEnvelope) e
 		logAgentApply(change, "", err)
 		return err
 	}
-	if err := a.writeAtomically(target, change.Bin); err != nil {
+	if err := a.walManager.PersistChange(ctx, change); err != nil {
 		logAgentApply(change, target, err)
 		return err
 	}
 	logAgentApply(change, target, nil)
 	return nil
+}
+
+func (a *Agent) Persist(ctx context.Context, change *replication.ChangeEnvelope) error {
+	if change == nil {
+		return fmt.Errorf("change is required")
+	}
+	target, err := a.targetPath(change.Type, change.Hostname)
+	if err != nil {
+		return err
+	}
+	return a.writeAtomically(target, change.Bin)
+}
+
+func (a *Agent) Load(_ context.Context, kind replication.EventType, hostname string) ([]byte, error) {
+	target, err := a.targetPath(kind, hostname)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(target)
 }
 
 func (a *Agent) Subscribe(ctx context.Context, client *replication.Client, podIP, agentID string) error {

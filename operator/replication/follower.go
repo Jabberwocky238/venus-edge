@@ -28,6 +28,11 @@ type VersionStore interface {
 	Save(context.Context, uint64) error
 }
 
+type AppliedVersionStore interface {
+	VersionStore
+	SaveApplied(context.Context, *ChangeEnvelope) error
+}
+
 type Follower struct {
 	client  SubscribeClient
 	applier ChangeApplier
@@ -142,6 +147,12 @@ func (f *Follower) consume(ctx context.Context, stream ReplicationService_Subscr
 			return err
 		}
 		current = change.GetVersionIndex()
+		if appliedStore, ok := f.store.(AppliedVersionStore); ok {
+			if err := appliedStore.SaveApplied(ctx, change); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := f.store.Save(ctx, current); err != nil {
 			return err
 		}

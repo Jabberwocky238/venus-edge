@@ -37,8 +37,7 @@ type SubscriberSnapshot struct {
 }
 
 type Coordinator struct {
-	cluster     string
-	wal         WAL
+	manager     *WALManager
 	mu          sync.RWMutex
 	subscribers map[string]*subscriber
 }
@@ -50,16 +49,12 @@ type subscriber struct {
 	ch      chan *ChangeEnvelope
 }
 
-func NewCoordinator(cluster string, wal WAL) (*Coordinator, error) {
-	if wal == nil {
-		return nil, fmt.Errorf("wal is required")
-	}
-	if cluster == "" {
-		cluster = "default"
+func NewCoordinator(manager *WALManager) (*Coordinator, error) {
+	if manager == nil {
+		return nil, fmt.Errorf("wal manager is required")
 	}
 	return &Coordinator{
-		cluster:     cluster,
-		wal:         wal,
+		manager:     manager,
 		subscribers: make(map[string]*subscriber),
 	}, nil
 }
@@ -72,14 +67,7 @@ func (c *Coordinator) Publish(ctx context.Context, kind EventType, hostname stri
 		return 0, fmt.Errorf("hostname is required")
 	}
 
-	change, err := c.wal.Append(ctx, &ChangeEnvelope{
-		Cluster:       c.cluster,
-		Type:          kind,
-		Hostname:      hostname,
-		Bin:           append([]byte(nil), bin...),
-		TimestampUnix: time.Now().Unix(),
-		Tier:          MessageTier_MESSAGE_TIER_NORMAL,
-	})
+	change, err := c.manager.Publish(ctx, kind, hostname, bin)
 	if err != nil {
 		return 0, err
 	}
@@ -93,7 +81,7 @@ func (c *Coordinator) HandleSubscribe(req *PushChangeRequest, stream Replication
 		return fmt.Errorf("subscribe request is required")
 	}
 
-	latest, err := c.wal.Latest(stream.Context())
+	latest, err := c.manager.Latest(stream.Context())
 	if err != nil {
 		return err
 	}
@@ -101,7 +89,7 @@ func (c *Coordinator) HandleSubscribe(req *PushChangeRequest, stream Replication
 		return fmt.Errorf("%w: agent=%d master=%d", ErrFutureVersion, req.GetVersionIndex(), latest)
 	}
 
-	backlog, err := c.wal.Since(stream.Context(), req.GetVersionIndex())
+	backlog, err := c.manager.ReplaySince(stream.Context(), req.GetVersionIndex())
 	if err != nil {
 		return err
 	}
@@ -226,7 +214,28 @@ func (w *FileWAL) Append(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvel
 	if err != nil {
 		return nil, err
 	}
-	nextIndex := latestIndex + 1
+	return w.appendLocked(ctx, env, latestIndex+1, true)
+}
+
+func (w *FileWAL) AppendApplied(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvelope, error) {
+	if env == nil {
+		return nil, fmt.Errorf("change envelope is required")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	latestIndex, err := w.latestLocked()
+	if err != nil {
+		return nil, err
+	}
+	if env.GetVersionIndex() <= latestIndex {
+		return cloneEnvelope(env), nil
+	}
+	return w.appendLocked(ctx, env, env.GetVersionIndex(), false)
+}
+
+func (w *FileWAL) appendLocked(ctx context.Context, env *ChangeEnvelope, nextIndex uint64, persistBin bool) (*ChangeEnvelope, error) {
 	targetSegment := segmentNumberForIndex(nextIndex)
 
 	latestOverlapIndex := uint64(0)
@@ -240,13 +249,20 @@ func (w *FileWAL) Append(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvel
 		if err != nil {
 			return nil, err
 		}
-		items, err := logRoot.Items()
+		state := &walSegmentState{msg: msg, log: logRoot}
+		states[segNo] = state
+	}
+
+foundOverlap:
+	for i := len(segmentNos) - 1; i >= 0; i-- {
+		segNo := segmentNos[i]
+		state := states[segNo]
+		items, err := state.log.Items()
 		if err != nil {
 			return nil, err
 		}
-		state := &walSegmentState{msg: msg, log: logRoot}
-		for i := 0; i < items.Len(); i++ {
-			item := items.At(i)
+		for j := items.Len() - 1; j >= 0; j-- {
+			item := items.At(j)
 			if item.Status() != EventItem_Status_ontop {
 				continue
 			}
@@ -254,16 +270,17 @@ func (w *FileWAL) Append(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvel
 			if err != nil {
 				return nil, err
 			}
-			if item.EventType() == toWALEventType(env.GetType()) && eventKey == env.GetHostname() {
-				item.SetStatus(EventItem_Status_overlaped)
-				latestOverlapIndex = item.Index()
-				if state.log.NotOverlap() > 0 {
-					state.log.SetNotOverlap(state.log.NotOverlap() - 1)
-				}
-				state.dirty = true
+			if item.EventType() != toWALEventType(env.GetType()) || eventKey != env.GetHostname() {
+				continue
 			}
+			item.SetStatus(EventItem_Status_overlaped)
+			latestOverlapIndex = item.Index()
+			if state.log.NotOverlap() > 0 {
+				state.log.SetNotOverlap(state.log.NotOverlap() - 1)
+			}
+			state.dirty = true
+			break foundOverlap
 		}
-		states[segNo] = state
 	}
 
 	target, ok := states[targetSegment]
@@ -281,7 +298,7 @@ func (w *FileWAL) Append(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvel
 		return nil, err
 	}
 	oldLen := existing.Len()
-	nextList, err := target.log.NewItems(oldLen + 1)
+	nextList, err := target.log.NewItems(int32(oldLen + 1))
 	if err != nil {
 		return nil, err
 	}
@@ -314,9 +331,6 @@ func (w *FileWAL) Append(ctx context.Context, env *ChangeEnvelope) (*ChangeEnvel
 	cloned := cloneEnvelope(env)
 	cloned.VersionIndex = nextIndex
 
-	if err := w.store.Persist(ctx, cloned); err != nil {
-		return nil, err
-	}
 	for _, segNo := range sortedSegmentKeys(states) {
 		state := states[segNo]
 		if !state.dirty {
@@ -402,7 +416,10 @@ func (w *FileWAL) readSegmentLocked(segment uint64) (*capnp.Message, EventLog, e
 		return nil, EventLog{}, err
 	}
 	root, err := ReadRootEventLog(msg)
-	return msg, root, err
+	if err != nil {
+		return nil, EventLog{}, err
+	}
+	return cloneEventLog(root)
 }
 
 func (w *FileWAL) writeSegmentLocked(segment uint64, msg *capnp.Message) error {
@@ -468,6 +485,49 @@ func (w *FileWAL) newSegment() (*capnp.Message, EventLog, error) {
 	root.SetStartTime(now)
 	root.SetCloseTime(now)
 	return msg, root, nil
+}
+
+func cloneEventLog(src EventLog) (*capnp.Message, EventLog, error) {
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		return nil, EventLog{}, err
+	}
+	dst, err := NewRootEventLog(seg)
+	if err != nil {
+		return nil, EventLog{}, err
+	}
+	srcItems, err := src.Items()
+	if err != nil {
+		return nil, EventLog{}, err
+	}
+	dstItems, err := dst.NewItems(int32(srcItems.Len()))
+	if err != nil {
+		return nil, EventLog{}, err
+	}
+	for i := 0; i < srcItems.Len(); i++ {
+		srcItem := srcItems.At(i)
+		dstItem := dstItems.At(i)
+		dstItem.SetIndex(srcItem.Index())
+		dstItem.SetEventType(srcItem.EventType())
+		key, err := srcItem.EventKey()
+		if err != nil {
+			return nil, EventLog{}, err
+		}
+		if err := dstItem.SetEventKey(key); err != nil {
+			return nil, EventLog{}, err
+		}
+		dstItem.SetEventAction(srcItem.EventAction())
+		dstItem.SetLastAffectIndex(srcItem.LastAffectIndex())
+		dstItem.SetStatus(srcItem.Status())
+	}
+	if err := dst.SetItems(dstItems); err != nil {
+		return nil, EventLog{}, err
+	}
+	dst.SetTotal(src.Total())
+	dst.SetNotOverlap(src.NotOverlap())
+	dst.SetStartTime(src.StartTime())
+	dst.SetCloseTime(src.CloseTime())
+	return msg, dst, nil
 }
 
 func (w *FileWAL) segmentNumbersLocked() ([]uint64, error) {

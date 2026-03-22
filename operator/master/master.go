@@ -50,6 +50,7 @@ type ACMEConfig struct {
 type Master struct {
 	root        string
 	store       objectstore.Store
+	walManager  *replication.WALManager
 	replication *replication.Coordinator
 	manageAddr  string
 	grpcAddr    string
@@ -66,13 +67,18 @@ func New(opts Options) (*Master, error) {
 	if err != nil {
 		return nil, err
 	}
-	coord, err := replication.NewCoordinator("default", wal)
+	walManager, err := replication.NewWALManager("default", wal, storeAdapter)
+	if err != nil {
+		return nil, err
+	}
+	coord, err := replication.NewCoordinator(walManager)
 	if err != nil {
 		return nil, err
 	}
 	return &Master{
 		root:        opts.Root,
 		store:       opts.Store,
+		walManager:  walManager,
 		replication: coord,
 		manageAddr:  opts.ManageAddr,
 		grpcAddr:    opts.GRPCAddr,

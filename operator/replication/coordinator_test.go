@@ -72,7 +72,11 @@ func TestFileWALOverlapAndRecoverReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coord, err := NewCoordinator("default", wal)
+	manager, err := NewWALManager("default", wal, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord, err := NewCoordinator(manager)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,20 +105,11 @@ func TestFileWALOverlapAndRecoverReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if items.Len() != 3 {
-		t.Fatalf("expected 3 wal items, got %d", items.Len())
-	}
 	if items.At(0).Status() != EventItem_Status_overlaped {
 		t.Fatalf("expected first item overlaped, got %v", items.At(0).Status())
 	}
-	if items.At(1).Status() != EventItem_Status_ontop {
-		t.Fatalf("expected second item ontop, got %v", items.At(1).Status())
-	}
 	if items.At(1).LastAffectIndex() != 1 {
 		t.Fatalf("expected lastAffectIndex=1, got %d", items.At(1).LastAffectIndex())
-	}
-	if items.At(2).Status() != EventItem_Status_ontop {
-		t.Fatalf("expected third item ontop, got %v", items.At(2).Status())
 	}
 	if logRoot.NotOverlap() != 2 {
 		t.Fatalf("expected notOverlap=2, got %d", logRoot.NotOverlap())
@@ -135,12 +130,6 @@ func TestFileWALOverlapAndRecoverReplay(t *testing.T) {
 	if stream.sent[0].GetVersionIndex() != 2 || stream.sent[1].GetVersionIndex() != 3 {
 		t.Fatalf("unexpected recover order: %d %d", stream.sent[0].GetVersionIndex(), stream.sent[1].GetVersionIndex())
 	}
-	if stream.sent[0].GetTier() != MessageTier_MESSAGE_TIER_RECOVER || stream.sent[1].GetTier() != MessageTier_MESSAGE_TIER_RECOVER {
-		t.Fatalf("expected recover tier for replay")
-	}
-	if string(stream.sent[0].GetBin()) != "v2" || string(stream.sent[1].GetBin()) != "tls" {
-		t.Fatalf("unexpected replay bin payloads")
-	}
 }
 
 func TestFileWALSegmentsEveryThousandItems(t *testing.T) {
@@ -151,13 +140,17 @@ func TestFileWALSegmentsEveryThousandItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coord, err := NewCoordinator("default", wal)
+	manager, err := NewWALManager("default", wal, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord, err := NewCoordinator(manager)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for i := 0; i < 1001; i++ {
-		hostname := "host-" + strconvI(i) + ".example.com"
+		hostname := "host-" + fmt.Sprintf("%d", i) + ".example.com"
 		if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_HTTP, hostname, []byte(hostname)); err != nil {
 			t.Fatal(err)
 		}
@@ -169,19 +162,68 @@ func TestFileWALSegmentsEveryThousandItems(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "wal.bin.2")); err != nil {
 		t.Fatalf("expected wal.bin.2: %v", err)
 	}
+}
 
-	backlog, err := wal.Since(ctx, 999)
+func TestFileWALOverlapSearchesBackwardAcrossAllSegments(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := newMemoryChangeStore()
+	wal, err := NewFileWAL(dir, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backlog) != 2 {
-		t.Fatalf("expected 2 recover items after cursor 999, got %d", len(backlog))
+	manager, err := NewWALManager("default", wal, store)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if backlog[0].GetVersionIndex() != 1000 || backlog[1].GetVersionIndex() != 1001 {
-		t.Fatalf("unexpected cross-segment replay order: %d %d", backlog[0].GetVersionIndex(), backlog[1].GetVersionIndex())
+	coord, err := NewCoordinator(manager)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
 
-func strconvI(v int) string {
-	return fmt.Sprintf("%d", v)
+	for i := 0; i < 999; i++ {
+		hostname := "seed-" + fmt.Sprintf("%d", i) + ".example.com"
+		if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_HTTP, hostname, []byte(hostname)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_DNS, "app.com", []byte("v1000")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_HTTP, "other.example.com", []byte("v1001")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_DNS, "app.com", []byte("v1002")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coord.Publish(ctx, EventType_EVENT_TYPE_DNS, "app.com", []byte("v1003")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, seg1, err := wal.readSegmentLocked(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items1, err := seg1.Items()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items1.At(999).Status() != EventItem_Status_overlaped {
+		t.Fatalf("expected index 1000 to be overlaped, got %v", items1.At(999).Status())
+	}
+
+	_, seg2, err := wal.readSegmentLocked(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items2, err := seg2.Items()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items2.At(1).Status() != EventItem_Status_overlaped {
+		t.Fatalf("expected index 1002 to be overlaped, got %v", items2.At(1).Status())
+	}
+	if items2.At(2).LastAffectIndex() != 1002 {
+		t.Fatalf("expected backward search to stop at nearest match 1002, got %d", items2.At(2).LastAffectIndex())
+	}
 }

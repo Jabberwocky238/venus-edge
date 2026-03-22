@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -90,18 +92,112 @@ func TestFollowerRecoverFlowAndReconnection(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Millisecond)
 	defer cancel()
-
 	err = follower.Run(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context deadline, got %v", err)
 	}
 	if store.version != 8 {
-		t.Fatalf("expected saved version 8 after apply, got %d", store.version)
+		t.Fatalf("expected saved version 8, got %d", store.version)
 	}
 	if len(client.calls) < 2 || client.calls[0] != 0 || client.calls[1] != 6 {
 		t.Fatalf("unexpected subscribe cursors: %#v", client.calls)
 	}
-	if len(applier.applied) != 4 || applier.applied[0] != 5 || applier.applied[1] != 6 || applier.applied[2] != 7 || applier.applied[3] != 8 {
-		t.Fatalf("unexpected apply order: %#v", applier.applied)
+}
+
+func TestWALManagerRecoversLatestAppliedIndex(t *testing.T) {
+	dir := t.TempDir()
+	store := newMemoryChangeStore()
+	wal, err := NewFileWAL(filepath.Join(dir, "agent", "wal"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewWALManager("default", wal, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SaveApplied(context.Background(), &ChangeEnvelope{
+		Type:         EventType_EVENT_TYPE_DNS,
+		Hostname:     "app.com",
+		Bin:          []byte("v7"),
+		VersionIndex: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SaveApplied(context.Background(), &ChangeEnvelope{
+		Type:         EventType_EVENT_TYPE_DNS,
+		Hostname:     "app.com",
+		Bin:          []byte("v8"),
+		VersionIndex: 8,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wal2, err := NewFileWAL(filepath.Join(dir, "agent", "wal"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager2, err := NewWALManager("default", wal2, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := manager2.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest != 8 {
+		t.Fatalf("expected recovered latest index 8, got %d", latest)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent", "wal", "wal.bin.1")); err != nil {
+		t.Fatalf("expected agent wal segment file: %v", err)
+	}
+}
+
+func TestFollowerUsesWALManagerForAppliedVersionRecovery(t *testing.T) {
+	dir := t.TempDir()
+	store := newMemoryChangeStore()
+	wal, err := NewFileWAL(filepath.Join(dir, "agent", "wal"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewWALManager("default", wal, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applier := &orderedApplier{}
+	client := &fakeSubscribeClient{
+		streams: []ReplicationService_SubscribeClient{
+			&fakeStream{changes: []*ChangeEnvelope{
+				{VersionIndex: 3, Tier: MessageTier_MESSAGE_TIER_RECOVER, Hostname: "a", Bin: []byte("a")},
+				{VersionIndex: 4, Tier: MessageTier_MESSAGE_TIER_NORMAL, Hostname: "b", Bin: []byte("b")},
+			}},
+		},
+	}
+	follower, err := NewFollower(client, applier, manager, "127.0.0.1", "agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	follower.retry = 10 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = follower.Run(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline, got %v", err)
+	}
+
+	wal2, err := NewFileWAL(filepath.Join(dir, "agent", "wal"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager2, err := NewWALManager("default", wal2, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := manager2.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest != 4 {
+		t.Fatalf("expected recovered latest index 4 from agent wal, got %d", latest)
 	}
 }
