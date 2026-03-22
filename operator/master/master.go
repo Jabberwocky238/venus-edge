@@ -196,7 +196,7 @@ func (m *Master) Start(ctx context.Context) error {
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		log.Printf("master manage api listening on %s", m.manageAddr)
+		log.Printf("master manage api listening on http://%s", m.manageAddr)
 		err := httpServer.ListenAndServe()
 		if groupCtx.Err() != nil || errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -204,7 +204,7 @@ func (m *Master) Start(ctx context.Context) error {
 		return err
 	})
 	group.Go(func() error {
-		log.Printf("master grpc listening on %s", m.grpcAddr)
+		log.Printf("master grpc listening on grpc://%s", m.grpcAddr)
 		err := grpcServer.Serve(grpcListener)
 		if groupCtx.Err() != nil || errors.Is(err, net.ErrClosed) {
 			return nil

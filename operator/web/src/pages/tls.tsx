@@ -136,5 +136,3 @@ function Field({ label, children, className = '' }: { label: string; children: R
 const inputClassName =
   'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm text-slate-900 outline-none transition focus:border-cyan-500'
 
-const readOnlyInputClassName =
-  'w-full rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 font-mono text-sm text-slate-500 outline-none'
