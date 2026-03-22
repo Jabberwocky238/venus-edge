@@ -19,6 +19,7 @@ metadata:
 type: Opaque
 stringData:
   VENUS_ACME_EAB_HMAC_KEY: ""
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -80,13 +81,13 @@ spec:
               containerPort: 10992
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /api/healthz
               port: 9000
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /api/healthz
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 10
