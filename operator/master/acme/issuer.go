@@ -3,18 +3,19 @@ package acme
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"fmt"
 	"net/http"
 	"strings"
 
-	xacme "golang.org/x/crypto/acme"
+	"github.com/go-acme/lego/v4/certcrypto"
+	"github.com/go-acme/lego/v4/certificate"
+	"github.com/go-acme/lego/v4/challenge"
+	"github.com/go-acme/lego/v4/lego"
+	"github.com/go-acme/lego/v4/registration"
 )
 
 const (
-	LetsEncryptProductionURL = xacme.LetsEncryptURL
+	LetsEncryptProductionURL = "https://acme-v02.api.letsencrypt.org/directory"
 	ZeroSSLProductionURL     = "https://acme.zerossl.com/v2/DV90"
 )
 
@@ -25,128 +26,135 @@ const (
 	ProviderZeroSSL     Provider = "zerossl"
 )
 
-type ExternalAccount struct {
-	KID string
-	Key []byte
+type legoUser struct {
+	email        string
+	key          crypto.PrivateKey
+	registration *registration.Resource
 }
 
-type IssuerConfig struct {
-	Provider        Provider
-	DirectoryURL    string
-	Email           string
-	AccountKey      crypto.Signer
-	UserAgent       string
-	HTTPClient      *http.Client
-	Prompt          func(string) bool
-	ExternalAccount *ExternalAccount
+func (u *legoUser) GetEmail() string {
+	return u.email
 }
 
-type Issuer struct {
-	config IssuerConfig
-	client *xacme.Client
+func (u *legoUser) GetRegistration() *registration.Resource {
+	return u.registration
 }
 
-func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
-	logACMEStart("issuer init provider=%s", cfg.Provider)
-	if strings.TrimSpace(cfg.Email) == "" {
+func (u *legoUser) GetPrivateKey() crypto.PrivateKey {
+	return u.key
+}
+
+type http01Provider struct {
+	solver   *HTTP01Solver
+	hostname string
+}
+
+func (p *http01Provider) Present(domain, token, keyAuth string) error {
+	return p.solver.Present(context.Background(), p.hostname, token, keyAuth)
+}
+
+func (p *http01Provider) CleanUp(domain, token, keyAuth string) error {
+	return p.solver.Cleanup(context.Background(), p.hostname, token)
+}
+
+type legoIssuer struct {
+	client   *lego.Client
+	provider challenge.Provider
+}
+
+func newLegoIssuer(email string, accountKey crypto.PrivateKey, provider string, httpClient *http.Client, eabKID, eabHMAC string, challengeProvider challenge.Provider) (*legoIssuer, error) {
+	logACMEStart("issuer init provider=%s", provider)
+	if strings.TrimSpace(email) == "" {
 		err := fmt.Errorf("email is required")
-		logACMEError(err, "issuer init provider=%s", cfg.Provider)
+		logACMEError(err, "issuer init provider=%s", provider)
+		return nil, err
+	}
+	if accountKey == nil {
+		err := fmt.Errorf("account key is required")
+		logACMEError(err, "issuer init provider=%s", provider)
+		return nil, err
+	}
+	if challengeProvider == nil {
+		err := fmt.Errorf("challenge provider is required")
+		logACMEError(err, "issuer init provider=%s", provider)
 		return nil, err
 	}
 
-	dirURL, err := resolveDirectoryURL(cfg)
-	if err != nil {
-		logACMEError(err, "issuer init provider=%s", cfg.Provider)
-		return nil, err
+	user := &legoUser{
+		email: strings.TrimSpace(email),
+		key:   accountKey,
 	}
-	cfg.DirectoryURL = dirURL
+	config := lego.NewConfig(user)
+	config.Certificate.KeyType = certcrypto.EC256
+	config.HTTPClient = httpClient
 
-	if cfg.AccountKey == nil {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			logACMEError(err, "issuer init provider=%s", cfg.Provider)
-			return nil, fmt.Errorf("generate account key: %w", err)
+	switch Provider(strings.TrimSpace(provider)) {
+	case "", ProviderZeroSSL:
+		config.CADirURL = ZeroSSLProductionURL
+		if strings.TrimSpace(eabKID) == "" || strings.TrimSpace(eabHMAC) == "" {
+			err := fmt.Errorf("zerossl requires external account binding")
+			logACMEError(err, "issuer init provider=%s", provider)
+			return nil, err
 		}
-		cfg.AccountKey = key
-	}
-
-	client := &xacme.Client{
-		Key:          cfg.AccountKey,
-		DirectoryURL: cfg.DirectoryURL,
-		HTTPClient:   cfg.HTTPClient,
-		UserAgent:    cfg.UserAgent,
-	}
-
-	issuer := &Issuer{
-		config: cfg,
-		client: client,
-	}
-	logACMEDone("issuer init provider=%s directory=%s", cfg.Provider, cfg.DirectoryURL)
-	return issuer, nil
-}
-
-func (i *Issuer) Client() *xacme.Client {
-	if i == nil {
-		return nil
-	}
-	return i.client
-}
-
-func (i *Issuer) Config() IssuerConfig {
-	if i == nil {
-		return IssuerConfig{}
-	}
-	return i.config
-}
-
-func (i *Issuer) Register(ctx context.Context) (*xacme.Account, error) {
-	if i == nil || i.client == nil {
-		err := fmt.Errorf("issuer is not initialized")
-		logACMEError(err, "issuer register")
-		return nil, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	logACMEStart("issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
-
-	acct := &xacme.Account{
-		Contact: []string{"mailto:" + strings.TrimSpace(i.config.Email)},
-	}
-	if i.config.ExternalAccount != nil {
-		acct.ExternalAccountBinding = &xacme.ExternalAccountBinding{
-			KID: i.config.ExternalAccount.KID,
-			Key: i.config.ExternalAccount.Key,
-		}
-	}
-
-	prompt := i.config.Prompt
-	if prompt == nil {
-		prompt = xacme.AcceptTOS
-	}
-	account, err := i.client.Register(ctx, acct, prompt)
-	if err != nil {
-		logACMEError(err, "issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
-		return nil, err
-	}
-	logACMEDone("issuer register provider=%s email=%s", i.config.Provider, strings.TrimSpace(i.config.Email))
-	return account, nil
-}
-
-func resolveDirectoryURL(cfg IssuerConfig) (string, error) {
-	if strings.TrimSpace(cfg.DirectoryURL) != "" {
-		return cfg.DirectoryURL, nil
-	}
-
-	switch cfg.Provider {
-	case ProviderLetsEncrypt, "":
-		return LetsEncryptProductionURL, nil
-	case ProviderZeroSSL:
-		if cfg.ExternalAccount == nil || strings.TrimSpace(cfg.ExternalAccount.KID) == "" || len(cfg.ExternalAccount.Key) == 0 {
-			return "", fmt.Errorf("zerossl requires external account binding")
-		}
-		return ZeroSSLProductionURL, nil
+	case ProviderLetsEncrypt:
+		config.CADirURL = LetsEncryptProductionURL
 	default:
-		return "", fmt.Errorf("unsupported acme provider: %q", cfg.Provider)
+		err := fmt.Errorf("unsupported acme provider: %q", provider)
+		logACMEError(err, "issuer init provider=%s", provider)
+		return nil, err
 	}
+
+	client, err := lego.NewClient(config)
+	if err != nil {
+		logACMEError(err, "issuer init provider=%s", provider)
+		return nil, err
+	}
+
+	switch Provider(strings.TrimSpace(provider)) {
+	case "", ProviderZeroSSL:
+		reg, err := client.Registration.RegisterWithExternalAccountBinding(registration.RegisterEABOptions{
+			TermsOfServiceAgreed: true,
+			Kid:                  strings.TrimSpace(eabKID),
+			HmacEncoded:          strings.TrimSpace(eabHMAC),
+		})
+		if err != nil {
+			reg, err = client.Registration.ResolveAccountByKey()
+			if err != nil {
+				logACMEError(err, "issuer register provider=%s email=%s", provider, user.email)
+				return nil, err
+			}
+		}
+		user.registration = reg
+	case ProviderLetsEncrypt:
+		reg, err := client.Registration.Register(registration.RegisterOptions{
+			TermsOfServiceAgreed: true,
+		})
+		if err != nil {
+			reg, err = client.Registration.ResolveAccountByKey()
+			if err != nil {
+				logACMEError(err, "issuer register provider=%s email=%s", provider, user.email)
+				return nil, err
+			}
+		}
+		user.registration = reg
+	}
+
+	logACMEDone("issuer init provider=%s directory=%s", provider, config.CADirURL)
+	return &legoIssuer{
+		client:   client,
+		provider: challengeProvider,
+	}, nil
+}
+
+func (i *legoIssuer) Obtain(_ context.Context, domains []string) (*certificate.Resource, error) {
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("domains are required")
+	}
+	if err := i.client.Challenge.SetHTTP01Provider(i.provider); err != nil {
+		return nil, err
+	}
+	return i.client.Certificate.Obtain(certificate.ObtainRequest{
+		Domains: domains,
+		Bundle:  true,
+	})
 }

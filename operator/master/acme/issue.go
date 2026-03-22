@@ -6,9 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,8 +16,6 @@ import (
 
 	ingress "aaa/ingress"
 	ingressbuilder "aaa/ingress/builder"
-
-	xacme "golang.org/x/crypto/acme"
 )
 
 type Config struct {
@@ -117,97 +113,27 @@ func issueAndPublishTLS(ctx context.Context, c Controller, cfg Config, hostname 
 	if err != nil {
 		return fmt.Errorf("load acme account key: %w", err)
 	}
-	var externalAccount *ExternalAccount
-	if strings.TrimSpace(cfg.ZeroSSLEABKID) != "" && strings.TrimSpace(cfg.ZeroSSLEABHMAC) != "" {
-		externalAccount = &ExternalAccount{
-			KID: strings.TrimSpace(cfg.ZeroSSLEABKID),
-			Key: []byte(strings.TrimSpace(cfg.ZeroSSLEABHMAC)),
-		}
-	}
-	issuer, err := NewIssuer(IssuerConfig{
-		Provider:        Provider(provider),
-		Email:           strings.TrimSpace(cfg.DefaultEmail),
-		AccountKey:      accountKey,
-		UserAgent:       "venus-edge-master-acme",
-		ExternalAccount: externalAccount,
-	})
+	issuer, err := newLegoIssuer(
+		strings.TrimSpace(cfg.DefaultEmail),
+		accountKey,
+		provider,
+		nil,
+		strings.TrimSpace(cfg.ZeroSSLEABKID),
+		strings.TrimSpace(cfg.ZeroSSLEABHMAC),
+		&http01Provider{
+			solver:   New(c).HTTP01(),
+			hostname: hostname,
+		},
+	)
 	if err != nil {
 		return err
 	}
-	if _, err := issuer.Register(ctx); err != nil && !errors.Is(err, xacme.ErrAccountAlreadyExists) {
-		return err
-	}
-	client := issuer.Client()
-	if client == nil {
-		return fmt.Errorf("acme client is not initialized")
-	}
-
-	order, err := client.AuthorizeOrder(ctx, xacme.DomainIDs(hostname))
-	if err != nil {
-		return fmt.Errorf("authorize order: %w", err)
-	}
-	solver := New(c).HTTP01()
-	for _, authzURL := range order.AuthzURLs {
-		authz, err := client.GetAuthorization(ctx, authzURL)
-		if err != nil {
-			return fmt.Errorf("get authorization: %w", err)
-		}
-		if authz.Status == xacme.StatusValid {
-			continue
-		}
-
-		var challenge *xacme.Challenge
-		for _, item := range authz.Challenges {
-			if item != nil && item.Type == string(challengeTypeHTTP01) {
-				challenge = item
-				break
-			}
-		}
-		if challenge == nil {
-			return fmt.Errorf("http-01 challenge not offered for %s", authz.Identifier.Value)
-		}
-
-		response, err := client.HTTP01ChallengeResponse(challenge.Token)
-		if err != nil {
-			return fmt.Errorf("build http-01 response: %w", err)
-		}
-		if err := solver.Present(ctx, hostname, challenge.Token, response); err != nil {
-			return fmt.Errorf("present http-01 challenge: %w", err)
-		}
-
-		waitErr := func() error {
-			defer func() {
-				_ = solver.Cleanup(context.Background(), hostname, challenge.Token)
-			}()
-			if _, err := client.Accept(ctx, challenge); err != nil {
-				return fmt.Errorf("accept challenge: %w", err)
-			}
-			if _, err := client.WaitAuthorization(ctx, authz.URI); err != nil {
-				return fmt.Errorf("wait authorization: %w", err)
-			}
-			return nil
-		}()
-		if waitErr != nil {
-			return waitErr
-		}
-	}
-
-	key, csrDER, err := createLeafCSR(hostname)
+	resource, err := issuer.Obtain(ctx, []string{hostname})
 	if err != nil {
 		return err
 	}
-	chain, _, err := client.CreateOrderCert(ctx, order.FinalizeURL, csrDER, true)
-	if err != nil {
-		return fmt.Errorf("create order cert: %w", err)
-	}
-	certPEM, err := encodeCertChainPEM(chain)
-	if err != nil {
-		return err
-	}
-	keyPEM, err := encodePrivateKeyPEM(key)
-	if err != nil {
-		return err
-	}
+	certPEM := string(resource.Certificate)
+	keyPEM := string(resource.PrivateKey)
 
 	next := ingressbuilder.NewTLSRoute().
 		WithHostName(hostname).
@@ -304,38 +230,4 @@ func loadOrCreateECDSAKey(path string) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 	return key, nil
-}
-
-func createLeafCSR(hostname string) (*ecdsa.PrivateKey, []byte, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate leaf key: %w", err)
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject:  pkix.Name{CommonName: hostname},
-		DNSNames: []string{hostname},
-	}, key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create certificate request: %w", err)
-	}
-	return key, csrDER, nil
-}
-
-func encodeCertChainPEM(chain [][]byte) (string, error) {
-	var out []byte
-	for _, der := range chain {
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
-	}
-	if len(out) == 0 {
-		return "", fmt.Errorf("empty certificate chain")
-	}
-	return string(out), nil
-}
-
-func encodePrivateKeyPEM(key *ecdsa.PrivateKey) (string, error) {
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return "", fmt.Errorf("marshal leaf private key: %w", err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})), nil
 }
