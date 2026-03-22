@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+# bash <(curl -sSL https://raw.githubusercontent.com/jabberwocky238/venus-edge/main/deploy/prepare.sh)
 TARGET_DIR="${PWD}"
 MODE_DIR="${HOME}/.venus-edge"
 MODE_FILE="${MODE_DIR}/mode"

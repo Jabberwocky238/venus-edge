@@ -12,13 +12,6 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - image_suffix: master
-            target: master
-          - image_suffix: agent
-            target: agent
 
     steps:
       - name: Checkout
@@ -35,7 +28,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.image_suffix }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
             type=sha
@@ -45,7 +38,6 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
