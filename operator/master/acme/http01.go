@@ -2,36 +2,33 @@ package acme
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
-
-	master "aaa/operator/master"
 )
 
 type HTTP01Solver struct {
-	master *master.Master
+	controller Controller
 }
 
 func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent string) error {
-	if err := ensureMaster(s.master); err != nil {
+	if err := ensureController(s.controller); err != nil {
 		return err
 	}
 	if hostname == "" || token == "" || fixContent == "" {
 		return fmt.Errorf("hostname, token and fixContent are required")
 	}
 	return run(ctx, func(ctx context.Context) error {
-		change, err := readHTTPChangeOrEmpty(ctx, s.master, hostname)
+		change, err := readHTTPChangeOrEmpty(ctx, s.controller, hostname)
 		if err != nil {
 			return err
 		}
-		challengePolicy := master.HTTPPolicyJSON{
+		challengePolicy := HTTPPolicy{
 			PathnameKind:   "exact",
 			Pathname:       challengePath(token),
 			FixContent:     fixContent,
 			AllowRawAccess: true,
 		}
-		next := make([]master.HTTPPolicyJSON, 0, len(change.Policies)+1)
+		next := make([]HTTPPolicy, 0, len(change.Policies)+1)
 		next = append(next, challengePolicy)
 		for _, policy := range change.Policies {
 			if isChallengePolicy(policy, token) {
@@ -41,11 +38,7 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 		}
 		change.Name = hostname
 		change.Policies = next
-		payload, err := json.Marshal(change)
-		if err != nil {
-			return err
-		}
-		if _, err := s.master.PublishHTTPJSON(ctx, hostname, payload); err != nil {
+		if err := s.controller.PublishHTTPChange(ctx, hostname, change); err != nil {
 			return err
 		}
 		state := challengeState{
@@ -55,30 +48,30 @@ func (s *HTTP01Solver) Present(ctx context.Context, hostname, token, fixContent 
 			FixContent: fixContent,
 			CreatedAt:  unixNow(),
 		}
-		return saveChallengeState(s.masterRoot(), state, http01Key(hostname, token))
+		return saveChallengeState(s.root(), state, http01Key(hostname, token))
 	})
 }
 
 func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) error {
-	if err := ensureMaster(s.master); err != nil {
+	if err := ensureController(s.controller); err != nil {
 		return err
 	}
 	if hostname == "" || token == "" {
 		return fmt.Errorf("hostname and token are required")
 	}
 	return run(ctx, func(ctx context.Context) error {
-		state, err := loadChallengeState(s.masterRoot(), http01Key(hostname, token))
+		state, err := loadChallengeState(s.root(), http01Key(hostname, token))
 		if err != nil {
 			if isNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		change, err := readHTTPChangeOrEmpty(ctx, s.master, state.Hostname)
+		change, err := readHTTPChangeOrEmpty(ctx, s.controller, state.Hostname)
 		if err != nil {
 			return err
 		}
-		filtered := make([]master.HTTPPolicyJSON, 0, len(change.Policies))
+		filtered := make([]HTTPPolicy, 0, len(change.Policies))
 		for _, policy := range change.Policies {
 			if isChallengePolicy(policy, state.Token) {
 				continue
@@ -87,22 +80,18 @@ func (s *HTTP01Solver) Cleanup(ctx context.Context, hostname, token string) erro
 		}
 		change.Name = state.Hostname
 		change.Policies = filtered
-		payload, err := json.Marshal(change)
-		if err != nil {
+		if err := s.controller.PublishHTTPChange(ctx, state.Hostname, change); err != nil {
 			return err
 		}
-		if _, err := s.master.PublishHTTPJSON(ctx, state.Hostname, payload); err != nil {
-			return err
-		}
-		return deleteChallengeState(s.masterRoot(), http01Key(hostname, token))
+		return deleteChallengeState(s.root(), http01Key(hostname, token))
 	})
 }
 
-func (s *HTTP01Solver) masterRoot() string {
-	if s.master == nil || s.master.Root() == "" {
+func (s *HTTP01Solver) root() string {
+	if s.controller == nil || s.controller.Root() == "" {
 		return "."
 	}
-	return s.master.Root()
+	return s.controller.Root()
 }
 
 func http01Key(hostname, token string) string {
@@ -113,19 +102,19 @@ func challengePath(token string) string {
 	return "/.well-known/acme-challenge/" + token
 }
 
-func isChallengePolicy(policy master.HTTPPolicyJSON, token string) bool {
+func isChallengePolicy(policy HTTPPolicy, token string) bool {
 	return policy.PathnameKind == "exact" &&
 		policy.Pathname == challengePath(token) &&
 		policy.FixContent != ""
 }
 
-func readHTTPChangeOrEmpty(ctx context.Context, m *master.Master, hostname string) (master.HTTPChangeJSON, error) {
-	change, err := m.ReadHTTPJSON(ctx, hostname)
+func readHTTPChangeOrEmpty(ctx context.Context, c Controller, hostname string) (HTTPChange, error) {
+	change, err := c.ReadHTTP(ctx, hostname)
 	if err != nil {
 		if isNotExist(err) {
-			return master.HTTPChangeJSON{Name: hostname}, nil
+			return HTTPChange{Name: hostname}, nil
 		}
-		return master.HTTPChangeJSON{}, err
+		return HTTPChange{}, err
 	}
 	return change, nil
 }

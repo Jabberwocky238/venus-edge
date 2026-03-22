@@ -175,7 +175,8 @@ func TestEndToEndFourPortsRouteCorrectly(t *testing.T) {
 		WithName("http.example.com").
 		AddPolicy(builder.NewHTTPPolicy().
 			WithBackend("http://127.0.0.1:"+itoaPort(httpBackend.port)).
-			WithPrefixPath("/")))
+			WithPrefixPath("/").
+			WithAllowRawAccess(true)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

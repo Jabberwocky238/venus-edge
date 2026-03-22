@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	masterpkg "aaa/operator/master"
-	_ "aaa/operator/master/acme"
 	"aaa/operator/master/objectstore"
 )
 

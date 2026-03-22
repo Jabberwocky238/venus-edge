@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	master "aaa/operator/master"
 )
 
 const (
@@ -19,7 +17,7 @@ const (
 )
 
 type Manager struct {
-	master *master.Master
+	controller Controller
 }
 
 type challengeType string
@@ -44,21 +42,49 @@ type certificateRequest struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-func init() {
-	master.RegisterHTTPPublishHook(onHTTPPoliciesPublished)
+type HTTPPolicy struct {
+	Backend        string
+	PathnameKind   string
+	Pathname       string
+	QueryItems     []HTTPKV
+	HeaderItems    []HTTPKV
+	FixContent     string
+	AllowRawAccess bool
 }
 
-func New(m *master.Master) *Manager {
-	return &Manager{master: m}
+type HTTPKV struct {
+	Key   string
+	Value string
+}
+
+type HTTPChange struct {
+	Name     string
+	Policies []HTTPPolicy
+}
+
+type TLSChange struct {
+	CertPEM string
+	KeyPEM  string
+}
+
+type Controller interface {
+	Root() string
+	ReadHTTP(context.Context, string) (HTTPChange, error)
+	PublishHTTPChange(context.Context, string, HTTPChange) error
+	ReadTLS(context.Context, string) (TLSChange, error)
+}
+
+func New(controller Controller) *Manager {
+	return &Manager{controller: controller}
 }
 
 func (m *Manager) HTTP01() *HTTP01Solver {
-	return &HTTP01Solver{master: m.master}
+	return &HTTP01Solver{controller: m.controller}
 }
 
-func ensureMaster(m *master.Master) error {
-	if m == nil {
-		return fmt.Errorf("master is required")
+func ensureController(c Controller) error {
+	if c == nil {
+		return fmt.Errorf("acme controller is required")
 	}
 	return nil
 }
@@ -74,11 +100,11 @@ func isNotExist(err error) bool {
 	return err != nil && os.IsNotExist(err)
 }
 
-func onHTTPPoliciesPublished(ctx context.Context, m *master.Master, hostname string, change master.HTTPChangeJSON) error {
-	if m == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
+func HandleHTTPPublish(ctx context.Context, c Controller, hostname string, change HTTPChange) error {
+	if c == nil || hostname == "" || len(change.Policies) == 0 || isACMEChallengeChange(change) {
 		return nil
 	}
-	tlsChange, err := m.ReadTLSJSON(ctx, hostname)
+	tlsChange, err := c.ReadTLS(ctx, hostname)
 	if err == nil && strings.TrimSpace(tlsChange.CertPEM) != "" && strings.TrimSpace(tlsChange.KeyPEM) != "" {
 		return nil
 	}
@@ -93,14 +119,14 @@ func onHTTPPoliciesPublished(ctx context.Context, m *master.Master, hostname str
 		Challenge: string(challengeTypeHTTP01),
 		CreatedAt: time.Now().Unix(),
 	}
-	if err := saveJSONFile(filepath.Join(m.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json"), req); err != nil {
+	if err := saveJSONFile(filepath.Join(c.Root(), acmeStateDir, "requests", sanitizeKey(hostname)+".json"), req); err != nil {
 		return err
 	}
 	log.Printf("%s auto request hostname=%s challenge=http-01 provider=%s", acmeLogPrefix, hostname, req.Provider)
 	return nil
 }
 
-func isACMEChallengeChange(change master.HTTPChangeJSON) bool {
+func isACMEChallengeChange(change HTTPChange) bool {
 	for _, policy := range change.Policies {
 		if strings.HasPrefix(policy.Pathname, "/.well-known/acme-challenge/") && policy.FixContent != "" {
 			return true

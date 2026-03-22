@@ -13,6 +13,7 @@ import (
 
 	dns "aaa/DNS"
 	ingress "aaa/ingress"
+	acme "aaa/operator/master/acme"
 	"aaa/operator/master/objectstore"
 	"aaa/operator/replication"
 
@@ -54,6 +55,34 @@ func (m *Master) Root() string {
 		return defaultMasterRoot
 	}
 	return m.root
+}
+
+func (m *Master) ReadHTTP(ctx context.Context, hostname string) (acme.HTTPChange, error) {
+	change, err := m.ReadHTTPJSON(ctx, hostname)
+	if err != nil {
+		return acme.HTTPChange{}, err
+	}
+	return toACMEHTTPChange(change), nil
+}
+
+func (m *Master) PublishHTTPChange(ctx context.Context, hostname string, change acme.HTTPChange) error {
+	payload, err := marshalACMEHTTPChange(change)
+	if err != nil {
+		return err
+	}
+	_, err = m.PublishHTTPJSON(ctx, hostname, payload)
+	return err
+}
+
+func (m *Master) ReadTLS(ctx context.Context, hostname string) (acme.TLSChange, error) {
+	change, err := m.ReadTLSJSON(ctx, hostname)
+	if err != nil {
+		return acme.TLSChange{}, err
+	}
+	return acme.TLSChange{
+		CertPEM: change.CertPEM,
+		KeyPEM:  change.KeyPEM,
+	}, nil
 }
 
 func New(opts Options) (*Master, error) {

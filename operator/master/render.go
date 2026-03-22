@@ -13,6 +13,7 @@ import (
 	dnsbuilder "aaa/DNS/builder"
 	ingress "aaa/ingress"
 	ingressbuilder "aaa/ingress/builder"
+	acme "aaa/operator/master/acme"
 	"aaa/operator/replication"
 )
 
@@ -105,10 +106,44 @@ func (m *Master) PublishHTTPJSON(ctx context.Context, hostname string, payload [
 	if err != nil {
 		return nil, err
 	}
-	if err := runHTTPPublishHooks(ctx, m, hostname, change); err != nil {
+	if err := acme.HandleHTTPPublish(ctx, m, hostname, toACMEHTTPChange(change)); err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+func toACMEHTTPChange(change HTTPChangeJSON) acme.HTTPChange {
+	out := acme.HTTPChange{
+		Name:     change.Name,
+		Policies: make([]acme.HTTPPolicy, 0, len(change.Policies)),
+	}
+	for _, policy := range change.Policies {
+		out.Policies = append(out.Policies, acme.HTTPPolicy{
+			Backend:        policy.Backend,
+			PathnameKind:   policy.PathnameKind,
+			Pathname:       policy.Pathname,
+			FixContent:     policy.FixContent,
+			AllowRawAccess: policy.AllowRawAccess,
+		})
+	}
+	return out
+}
+
+func marshalACMEHTTPChange(change acme.HTTPChange) ([]byte, error) {
+	out := HTTPChangeJSON{
+		Name:     change.Name,
+		Policies: make([]HTTPPolicyJSON, 0, len(change.Policies)),
+	}
+	for _, policy := range change.Policies {
+		out.Policies = append(out.Policies, HTTPPolicyJSON{
+			Backend:        policy.Backend,
+			PathnameKind:   policy.PathnameKind,
+			Pathname:       policy.Pathname,
+			FixContent:     policy.FixContent,
+			AllowRawAccess: policy.AllowRawAccess,
+		})
+	}
+	return json.Marshal(out)
 }
 
 func renderDNSChange(change DNSChangeJSON) ([]byte, error) {
