@@ -134,8 +134,7 @@ func (b *TLSRouteBuilder) Build(zone ingress.TlsZone) error {
 	}
 	policy.SetKind(b.Kind)
 
-	switch b.Kind {
-	case ingress.TlsPolicy_Kind_tlsPassthrough, ingress.TlsPolicy_Kind_tlsTerminate:
+	if strings.TrimSpace(b.BackendHostname) != "" || b.BackendPort != 0 {
 		if err := requireText("backend.hostname", b.BackendHostname); err != nil {
 			return err
 		}
@@ -150,6 +149,16 @@ func (b *TLSRouteBuilder) Build(zone ingress.TlsZone) error {
 			return err
 		}
 		backendRef.SetPort(b.BackendPort)
+	}
+
+	switch b.Kind {
+	case ingress.TlsPolicy_Kind_tlsPassthrough, ingress.TlsPolicy_Kind_tlsTerminate:
+		if err := requireText("backend.hostname", b.BackendHostname); err != nil {
+			return err
+		}
+		if b.BackendPort == 0 {
+			return fmt.Errorf("backend.port is required")
+		}
 	case ingress.TlsPolicy_Kind_https:
 		if strings.TrimSpace(b.CertPEM) == "" || strings.TrimSpace(b.KeyPEM) == "" {
 			return fmt.Errorf("certPem and keyPem are required for https")

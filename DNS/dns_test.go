@@ -18,6 +18,12 @@ type fakeResponseWriter struct {
 	msg *mdns.Msg
 }
 
+type queryLookupFunc func(context.Context, *mdns.Msg) (*mdns.Msg, error)
+
+func (fn queryLookupFunc) Lookup(ctx context.Context, req *mdns.Msg) (*mdns.Msg, error) {
+	return fn(ctx, req)
+}
+
 func (f *fakeResponseWriter) LocalAddr() net.Addr        { return &net.UDPAddr{} }
 func (f *fakeResponseWriter) RemoteAddr() net.Addr       { return &net.UDPAddr{} }
 func (f *fakeResponseWriter) WriteMsg(m *mdns.Msg) error { f.msg = m; return nil }
@@ -124,6 +130,19 @@ func mustNewQuestion(name string, qtype uint16) *mdns.Msg {
 	return req
 }
 
+func authoritativeLookup(lookup zoneLookup) func(string, uint16) (lookupResult, error) {
+	return func(name string, qtype uint16) (lookupResult, error) {
+		answers, err := lookup.Lookup(name, qtype)
+		if err != nil {
+			return lookupResult{}, err
+		}
+		return lookupResult{
+			answers:       answers,
+			authoritative: true,
+		}, nil
+	}
+}
+
 func TestNewReaderLookupAndServeDNS(t *testing.T) {
 	data := mustEncodeTestZone(t)
 
@@ -135,7 +154,7 @@ func TestNewReaderLookupAndServeDNS(t *testing.T) {
 	req := mustNewQuestion("example.com.", mdns.TypeA)
 
 	writer := &fakeResponseWriter{}
-	respond(writer, req, lookup, nil, nil)
+	respond(writer, req, authoritativeLookup(lookup), nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -167,7 +186,7 @@ func TestServeDNSReturnsTXT(t *testing.T) {
 	req := mustNewQuestion("example.com.", mdns.TypeTXT)
 
 	writer := &fakeResponseWriter{}
-	respond(writer, req, lookup, nil, nil)
+	respond(writer, req, authoritativeLookup(lookup), nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -197,7 +216,7 @@ func TestServeDNSMatchesWildcard(t *testing.T) {
 	}
 
 	writer := &fakeResponseWriter{}
-	respond(writer, mustNewQuestion("foo.example.com.", mdns.TypeA), lookup, nil, nil)
+	respond(writer, mustNewQuestion("foo.example.com.", mdns.TypeA), authoritativeLookup(lookup), nil, nil)
 
 	if writer.msg == nil {
 		t.Fatal("expected response message")
@@ -289,6 +308,43 @@ func TestFileHandlerReturnsNameErrorWhenZoneMissing(t *testing.T) {
 	}
 	if writer.msg.Rcode != mdns.RcodeNameError {
 		t.Fatalf("unexpected rcode: %d", writer.msg.Rcode)
+	}
+}
+
+func TestRespondReturnsNameErrorWithoutForwardWhenZoneMatchesButRecordMissing(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeTo(&buf, testARecordBuilder{}, testSOARecordBuilder{}); err != nil {
+		t.Fatalf("writeTo() error = %v", err)
+	}
+
+	lookup, err := newReaderLookup(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("newReaderLookup() error = %v", err)
+	}
+
+	req := mustNewQuestion("missing.example.com.", mdns.TypeA)
+	writer := &fakeResponseWriter{}
+	forwardCalled := false
+
+	respond(writer, req, authoritativeLookup(lookup), queryLookupFunc(func(context.Context, *mdns.Msg) (*mdns.Msg, error) {
+		forwardCalled = true
+		return nil, fmt.Errorf("forward should not be called")
+	}), nil)
+
+	if forwardCalled {
+		t.Fatal("expected authoritative miss to skip forward lookup")
+	}
+	if writer.msg == nil {
+		t.Fatal("expected response message")
+	}
+	if writer.msg.Rcode != mdns.RcodeNameError {
+		t.Fatalf("unexpected rcode: %d", writer.msg.Rcode)
+	}
+	if len(writer.msg.Ns) != 1 {
+		t.Fatalf("expected 1 authority record, got %d", len(writer.msg.Ns))
+	}
+	if _, ok := writer.msg.Ns[0].(*mdns.SOA); !ok {
+		t.Fatalf("expected SOA authority record, got %T", writer.msg.Ns[0])
 	}
 }
 

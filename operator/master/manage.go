@@ -184,7 +184,7 @@ func (s *ManageServer) handleDNS(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(payload, &input); err != nil {
 				return nil, fmt.Errorf("decode dns builder json: %w", err)
 			}
-			bin, err := dnsPayloadToBin(input)
+			bin, err := dnsPayloadToBin(hostname, input)
 			if err != nil {
 				return nil, err
 			}
@@ -507,14 +507,28 @@ func parseTLSKind(value string) (ingress.TlsPolicy_Kind, error) {
 	}
 }
 
-func dnsPayloadToBin(input manageDNSPayload) ([]byte, error) {
-	records := make([]dns.RecordBuilder, 0, len(input.Records))
+func dnsPayloadToBin(hostname string, input manageDNSPayload) ([]byte, error) {
+	records := make([]dns.RecordBuilder, 0, len(input.Records)+2)
+	hasSOA := false
+	hasNS := false
 	for i, record := range input.Records {
 		builder, err := dnsRecordBuilderFromPayload(record)
 		if err != nil {
 			return nil, fmt.Errorf("build dns record %d: %w", i, err)
 		}
+		switch strings.ToLower(strings.TrimSpace(record.Type)) {
+		case "soa":
+			hasSOA = true
+		case "ns":
+			hasNS = true
+		}
 		records = append(records, builder)
+	}
+	if !hasSOA {
+		records = append(records, defaultSOARecord(hostname))
+	}
+	if !hasNS {
+		records = append(records, defaultNSRecord(hostname))
 	}
 
 	var buf bytes.Buffer
@@ -545,6 +559,37 @@ func dnsPayloadFromBin(bin []byte) (manageDNSPayload, error) {
 		out.Records = append(out.Records, record)
 	}
 	return out, nil
+}
+
+func defaultSOARecord(hostname string) dns.RecordBuilder {
+	zone := normalizeDNSName(hostname)
+	return dnsbuilder.NewSOA().
+		WithName(zone).
+		WithMName("ns1." + zone).
+		WithRName("hostmaster." + zone).
+		WithSerial(uint32(time.Now().Unix())).
+		WithRefresh(3600).
+		WithRetry(600).
+		WithExpire(1209600).
+		WithMinimum(300)
+}
+
+func defaultNSRecord(hostname string) dns.RecordBuilder {
+	zone := normalizeDNSName(hostname)
+	return dnsbuilder.NewNS().
+		WithName(zone).
+		WithHost("ns1." + zone)
+}
+
+func normalizeDNSName(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "."
+	}
+	if strings.HasSuffix(trimmed, ".") {
+		return trimmed
+	}
+	return trimmed + "."
 }
 
 func dnsRecordBuilderFromPayload(record manageDNSRecord) (dns.RecordBuilder, error) {

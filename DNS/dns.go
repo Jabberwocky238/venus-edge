@@ -67,6 +67,12 @@ type storeHandler struct {
 	forwarder queryLookup
 }
 
+type lookupResult struct {
+	answers       []mdns.RR
+	authority     []mdns.RR
+	authoritative bool
+}
+
 func NewDNSEngine(opts DNSEngineOptions) *Engine {
 	forwardCfg := DefaultForwarderConfig()
 	if len(opts.ForwardServers) > 0 {
@@ -197,36 +203,51 @@ func newReaderLookup(r io.Reader) (zoneLookup, error) {
 
 func (h *storeHandler) ServeDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	logDNSRequest(w.RemoteAddr(), req)
-	respond(w, req, zoneLookupFunc(func(name string, qtype uint16) ([]mdns.RR, error) {
-		readerHandler, err := h.lookupForQuestion(name)
+	respond(w, req, func(name string, qtype uint16) (lookupResult, error) {
+		readerHandler, authoritative, err := h.lookupForQuestion(name)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil
+				return lookupResult{}, nil
 			}
-			return nil, err
+			return lookupResult{}, err
 		}
-		return readerHandler.Lookup(name, qtype)
-	}), h.forwarder, h.geoDriver)
+		answers, err := readerHandler.Lookup(name, qtype)
+		if err != nil {
+			return lookupResult{}, err
+		}
+		return lookupResult{
+			answers:       answers,
+			authority:     readerHandler.Authority(),
+			authoritative: authoritative,
+		}, nil
+	}, h.forwarder, h.geoDriver)
 }
 
-func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup zoneLookup, forwarder queryLookup, geo ipLookup) {
+func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup func(string, uint16) (lookupResult, error), forwarder queryLookup, geo ipLookup) {
 	resp := new(mdns.Msg)
 	resp.SetReply(req)
 	resp.Authoritative = true
+	authoritativeMatch := false
 
 	for _, q := range req.Question {
-		answers, err := lookup.Lookup(q.Name, q.Qtype)
+		result, err := lookup(q.Name, q.Qtype)
 		if err != nil {
 			resp.Rcode = mdns.RcodeServerFailure
 			logDNSResponse(w.RemoteAddr(), req, resp, err)
 			_ = w.WriteMsg(resp)
 			return
 		}
-		sortRRsByClientDistance(geo, w.RemoteAddr(), answers)
-		resp.Answer = append(resp.Answer, answers...)
+		if result.authoritative {
+			authoritativeMatch = true
+		}
+		sortRRsByClientDistance(geo, w.RemoteAddr(), result.answers)
+		resp.Answer = append(resp.Answer, result.answers...)
+		if len(resp.Answer) == 0 && len(resp.Ns) == 0 && len(result.authority) > 0 {
+			resp.Ns = append(resp.Ns, result.authority...)
+		}
 	}
 
-	if len(resp.Answer) == 0 && len(req.Question) > 0 && forwarder != nil {
+	if !authoritativeMatch && len(resp.Answer) == 0 && len(req.Question) > 0 && forwarder != nil {
 		forwarded, err := forwarder.Lookup(context.Background(), req)
 		if err == nil && forwarded != nil {
 			sortRRsByClientDistance(geo, w.RemoteAddr(), forwarded.Answer)
@@ -244,28 +265,28 @@ func respond(w mdns.ResponseWriter, req *mdns.Msg, lookup zoneLookup, forwarder 
 	_ = w.WriteMsg(resp)
 }
 
-func (h *storeHandler) lookupForQuestion(name string) (zoneLookup, error) {
+func (h *storeHandler) lookupForQuestion(name string) (zoneLookup, bool, error) {
 	for _, zone := range CandidateZones(name) {
 		f, err := h.store.OpenZone(zone)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			return nil, err
+			return nil, false, err
 		}
 
 		handler, newErr := newReaderLookup(f)
 		closeErr := f.Close()
 		if newErr != nil {
-			return nil, newErr
+			return nil, false, newErr
 		}
 		if closeErr != nil {
-			return nil, closeErr
+			return nil, false, closeErr
 		}
-		return handler, nil
+		return handler, true, nil
 	}
 
-	return nil, os.ErrNotExist
+	return nil, false, os.ErrNotExist
 }
 
 func (h *readerHandler) Lookup(name string, qtype uint16) ([]mdns.RR, error) {
@@ -300,6 +321,27 @@ func (h *readerHandler) Lookup(name string, qtype uint16) ([]mdns.RR, error) {
 	}
 
 	return answers, nil
+}
+
+func (h *readerHandler) Authority() []mdns.RR {
+	offsets := h.indexes[mdns.TypeSOA]
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	authority := make([]mdns.RR, 0, len(offsets))
+	for _, offset := range offsets {
+		if int(offset) >= h.records.Len() {
+			continue
+		}
+		record := h.records.At(int(offset))
+		rr, err := recordToRR(record)
+		if err != nil || rr == nil {
+			continue
+		}
+		authority = append(authority, rr)
+	}
+	return authority
 }
 
 func recordMatchesName(recordName, queryName string) bool {
