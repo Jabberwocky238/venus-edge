@@ -4,13 +4,13 @@ metadata:
   name: venus-edge-agent-config
   namespace: venus-edge
 data:
-  VENUS_AGENT_ROOT: "/var/lib/luna"
+  VENUS_AGENT_ROOT: "/var/lib/venus"
   VENUS_TLS_LISTEN: ":443"
   VENUS_HTTP_LISTEN: ":80"
   VENUS_DNS_LISTEN: ":53"
   VENUS_HEALTH_LISTEN: ":50050"
   VENUS_MASTER_ADDRESS: "venus-master.venus-edge.svc.cluster.local:10992"
-  VENUS_DNS_GEOIP_MMDB_PATH: "/var/lib/luna/geoip/GeoLite2-City.mmdb"
+  VENUS_DNS_GEOIP_MMDB_PATH: "/var/lib/venus/geoip/GeoLite2-City.mmdb"
   VENUS_DNS_FORWARD_SERVERS: "1.1.1.1:53,8.8.8.8:53"
   GEOIP_CITY_MMDB_URL: "http://cdnus.enzyme.jw238.site/GeoLite2-City.mmdb"
 ---
@@ -67,12 +67,12 @@ spec:
             - sh
             - -ec
             - |
-              mkdir -p /var/lib/luna/geoip
-              if [ -s /var/lib/luna/geoip/GeoLite2-City.mmdb ]; then
+              mkdir -p /var/lib/venus/geoip
+              if [ -s /var/lib/venus/geoip/GeoLite2-City.mmdb ]; then
                 exit 0
               fi
-              curl -fsSL "${GEOIP_CITY_MMDB_URL}" -o /var/lib/luna/geoip/GeoLite2-City.mmdb.tmp
-              mv /var/lib/luna/geoip/GeoLite2-City.mmdb.tmp /var/lib/luna/geoip/GeoLite2-City.mmdb
+              curl -fsSL "${GEOIP_CITY_MMDB_URL}" -o /var/lib/venus/geoip/GeoLite2-City.mmdb.tmp
+              mv /var/lib/venus/geoip/GeoLite2-City.mmdb.tmp /var/lib/venus/geoip/GeoLite2-City.mmdb
           env:
             - name: GEOIP_CITY_MMDB_URL
               valueFrom:
@@ -81,7 +81,7 @@ spec:
                   key: GEOIP_CITY_MMDB_URL
           volumeMounts:
             - name: data
-              mountPath: /var/lib/luna
+              mountPath: /var/lib/venus
       containers:
         - name: agent
           image: ghcr.io/jabberwocky238/venus-edge:latest
@@ -143,7 +143,7 @@ spec:
             periodSeconds: 10
           volumeMounts:
             - name: data
-              mountPath: /var/lib/luna
+              mountPath: /var/lib/venus
       volumes:
         - name: data
           emptyDir: {}

@@ -4,7 +4,7 @@ metadata:
   name: venus-edge-master-config
   namespace: venus-edge
 data:
-  VENUS_MASTER_ROOT: "/var/lib/luna"
+  VENUS_MASTER_ROOT: "/var/lib/venus"
   VENUS_MANAGE_LISTEN: ":9000"
   VENUS_REPLICATION_LISTEN: ":10992"
   VENUS_ACME_DEFAULT_PROVIDER: "zerossl"
@@ -23,11 +23,11 @@ stringData:
 apiVersion: v1
 kind: Service
 metadata:
-  name: luna-master
+  name: venus-master
   namespace: venus-edge
 spec:
   selector:
-    app: luna-master
+    app: venus-master
   ports:
     - name: manage
       port: 9000
@@ -39,17 +39,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: luna-master
+  name: venus-master
   namespace: venus-edge
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: luna-master
+      app: venus-master
   template:
     metadata:
       labels:
-        app: luna-master
+        app: venus-master
     spec:
       serviceAccountName: venus-edge-master
       containers:
@@ -94,7 +94,7 @@ spec:
             periodSeconds: 10
           volumeMounts:
             - name: data
-              mountPath: /var/lib/luna
+              mountPath: /var/lib/venus
       volumes:
         - name: data
           emptyDir: {}
