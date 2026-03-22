@@ -7,6 +7,7 @@ data:
   VENUS_MASTER_ROOT: "/var/lib/venus"
   VENUS_MANAGE_LISTEN: ":9000"
   VENUS_REPLICATION_LISTEN: ":10992"
+  VENUS_WEB_ROOT: "/app/operator/web/dist"
   VENUS_ACME_DEFAULT_PROVIDER: "zerossl"
   VENUS_ACME_DEFAULT_EMAIL: "shadowsocks1984@gmail.com"
   VENUS_ACME_EAB_KID: ""
